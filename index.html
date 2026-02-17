@@ -65,7 +65,7 @@
   #flowchart-wrap .fc-node:hover rect { stroke-opacity: 0.8 !important; }
 
   /* Detail panel */
-  #detail { border-top: 1px solid var(--border); padding: 12px; flex-shrink: 0; max-height: 340px; overflow-y: auto; transition: background 0.3s; }
+  #detail { border-top: 1px solid var(--border); padding: 12px; flex-shrink: 0; max-height: 440px; overflow-y: auto; transition: background 0.3s; }
   #detail .det-header { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
   #detail .det-dot { width: 10px; height: 10px; border-radius: 2px; }
   #detail .det-name { font-size: 12px; font-weight: 700; }
@@ -172,7 +172,7 @@ const PHASES = [
     layers:[
       {name:"Seed Expansion",
        math:"(ρ, σ) ← G(d ‖ k)",
-       desc:"G = SHA3-512 expands 32-byte seed d concatenated with parameter k (security level byte) into public seed ρ (32 B, generates Â) and secret seed σ (32 B, generates s, e). FIPS 203 Alg 13, line 1.",
+       desc:"Implementation: call SHA3-512 on (d[0..31] ‖ k) where k ∈ {2,3,4} is the ML-KEM security level. Output 64 bytes: ρ = first 32 (public, transmitted in ek), σ = last 32 (secret, used for PRF calls then discarded). Initialize counter N=0 for subsequent PRF invocations. Security: including k in the hash input provides domain separation between parameter sets — prevents cross-parameter oracle attacks where an adversary reuses a seed across ML-KEM-512/768/1024. SHA3-512 as G ensures 256-bit preimage resistance for both sub-seeds. Alg 13 line 1.",
        color:"#94a3b8",type:"input",
        algRef:"Alg 13 line 1",
        pseudo:[
@@ -182,7 +182,7 @@ const PHASES = [
        ]},
       {name:"Matrix Expansion",
        math:"Â[i][j] ← SampleNTT(XOF(ρ ‖ j ‖ i))",
-       desc:"SHAKE-128 (XOF) expands ρ into k² polynomials directly in NTT domain. Each polynomial has 256 coefficients in ℤ₃₃₂₉. Rejection sampling ensures uniform distribution. Deterministic from ρ alone. Note index order: j then i per FIPS 203.",
+       desc:"Implementation: for each (i,j) pair, initialize SHAKE-128 with (ρ ‖ j ‖ i) — note column-first index order per FIPS 203. Stream 3-byte chunks, parse as 12-bit pairs d₁,d₂, reject values ≥ 3329, accept until 256 coefficients collected. Each accepted value is already in NTT domain. Total: k² SHAKE-128 instances, ~585 bytes consumed each on average. Matrix is deterministic from ρ — both parties regenerate identically. Security: rejection sampling ensures Â is statistically uniform over ℤ_q^(256) — any bias would weaken the M-LWE assumption by enabling algebraic distinguishers. Using XOF (SHAKE-128) rather than a block cipher PRF avoids output-length limitations and provides collision resistance against adversaries who try to find ρ values producing structured matrices.",
        color:"#22d3ee",type:"expand",
        algRef:"Alg 13 lines 4-6",
        pseudo:[
@@ -192,7 +192,7 @@ const PHASES = [
        ]},
       {name:"Secret Sampling",
        math:"s[i] ← SamplePolyCBD_η₁(PRF(σ, N++))  for i in [0,k)",
-       desc:"Centered Binomial Distribution (CBD): sample 2η₁ random bytes per coefficient via PRF = SHAKE-256(σ ‖ N), split into halves, subtract sums. Coefficients in [−η₁, η₁]. Vector s is the secret trapdoor. η₁=2 for ML-KEM-768/1024, η₁=3 for ML-KEM-512.",
+       desc:"Implementation: PRF = SHAKE-256(σ ‖ N) produces 64·η₁ bytes per polynomial. CBD_η₁ splits each 2η₁-byte block into two η₁-bit halves, sums the bits in each half, subtracts → coefficient in [−η₁, η₁]. Parameters: η₁=2 (ML-KEM-768/1024, 128 bytes/poly) or η₁=3 (ML-KEM-512, 192 bytes/poly). PRF counter N increments k times: N=0..k−1. Security: CBD is preferred over discrete Gaussian because it is trivially constant-time (no rejection, no floating-point) — Gaussian samplers are notoriously vulnerable to timing side-channels that leak secret key bits. The small η₁ values ensure sufficient entropy in s while keeping the M-LWE noise small enough for correct decryption. The PRF-based derivation from σ means s is pseudorandom under SHAKE-256 security even if the RBG seed d has limited min-entropy.",
        color:"#34d399",type:"sample",
        algRef:"Alg 13 lines 7-8",
        pseudo:[
@@ -201,7 +201,7 @@ const PHASES = [
        ]},
       {name:"Error Sampling",
        math:"e[i] ← SamplePolyCBD_η₁(PRF(σ, N++))  for i in [0,k)",
-       desc:"Same CBD process with the incremented counter N. Error vector e masks the exact relation t = A·s, making (A, t) computationally indistinguishable from uniform random under the M-LWE assumption.",
+       desc:"Implementation: identical CBD_η₁ process using counter N=k..2k−1 (continuing from secret sampling). Same σ seed, same byte-count per polynomial. The error vector e must be statistically independent of s — the incrementing counter N ensures distinct PRF outputs. After this step, σ and N are no longer needed and should be zeroized. Security: the error vector prevents the public key from being an exact linear function of s. Without e, an adversary could solve t = A·s directly via Gaussian elimination in ℤ_q. The M-LWE hardness assumption requires that (A, A·s+e) is computationally indistinguishable from (A, uniform) — the error magnitude η₁ is carefully chosen to balance security (larger e → harder problem) against correctness (smaller e → less decryption noise).",
        color:"#f59e0b",type:"sample",
        algRef:"Alg 13 lines 9-10",
        pseudo:[
@@ -210,7 +210,7 @@ const PHASES = [
        ]},
       {name:"NTT (Number Theoretic Transform) Forward",
        math:"ŝ[i] = NTT(s[i]),  ê[i] = NTT(e[i])  ∀i",
-       desc:"Number Theoretic Transform converts each polynomial to evaluation form at powers of ζ=17 (primitive 256th root of unity mod 3329). Enables O(n log n) polynomial multiplication. q=3329 chosen so 256 | (q−1), ensuring NTT-friendly structure.",
+       desc:"Implementation: 7-layer butterfly network (log₂256 = 8, but FIPS 203 uses 7 layers operating on pairs). Root of unity ζ=17 mod q=3329; precompute ζ^BitRev7(i) for i=0..127 as twiddle factors. In-place: each layer halves the stride, multiplies by twiddle, adds/subtracts. 7×128 = 896 multiply-reduce operations per polynomial, 2k polynomials total. All subsequent arithmetic stays in NTT domain until INTT is needed. Security: the NTT itself is not a security-relevant transform — it is purely a performance optimization. However, constant-time NTT implementations must avoid data-dependent branches or memory access patterns in the butterfly operations, as cache-timing attacks (Brumley-Tuveri style) on the twiddle factor lookups could leak information about the secret polynomial s. q = 3329 was specifically chosen so that 256 | (q−1) and q is prime, enabling both NTT-friendly structure and simple modular arithmetic.",
        color:"#a78bfa",type:"transform",
        algRef:"Alg 13 lines 11-12",
        pseudo:[
@@ -221,7 +221,7 @@ const PHASES = [
        ]},
       {name:"Matrix–Vector Multiply",
        math:"t̂[i] = Σⱼ (Â[i][j] ∘ ŝ[j])   (pointwise in NTT domain)",
-       desc:"k pointwise polynomial multiplications per row, each ∘ = MultiplyNTTs (Alg 11): 128 base-case multiplies of degree-1 polynomials mod (X²−ζ^(2·BitRev7(i)+1)). Total: k²·128 base-case multiplies. Result accumulated in NTT domain.",
+       desc:"Implementation: MultiplyNTTs (Alg 11) operates on pairs of coefficients at indices (2i, 2i+1) as degree-1 polynomials mod (X²−γ) where γ=ζ^(2·BitRev7(i)+1). Each base-case: 2 multiplies, 1 add, 1 subtract, 2 reductions mod q. Total per ∘: 128 base-cases = 256 multiplies. Accumulate via coefficient-wise addition mod q. Grand total: k² × 256 multiplications + k² × 256 additions. Security: this is where the Module-LWE structure provides its security advantage — the module structure (k×k matrix of ring elements) allows ML-KEM to interpolate between pure Ring-LWE (k=1, efficient but relies on ring structure) and plain LWE (k=n, secure but large keys). The module approach hedges against potential algebraic attacks on ring structure while maintaining compact key sizes.",
        color:"#f87171",type:"compute",
        algRef:"Alg 13 line 15 (partial)",
        pseudo:[
@@ -232,7 +232,7 @@ const PHASES = [
        ]},
       {name:"Error Addition",
        math:"t̂ = t̂ + ê",
-       desc:"Pointwise addition in NTT domain completes the Module-LWE instance: t = A·s + e (in coefficient domain). This is the core one-way function — recovering s from (A, t) requires solving M-LWE, believed hard even for quantum adversaries.",
+       desc:"Implementation: coefficient-wise addition mod 3329 of ê into the accumulated product. 256×k additions. Completes t̂ = Â∘ŝ + ê in NTT domain, equivalent to t = A·s + e in coefficient domain. This is the M-LWE instance — the security assumption is that (Â, t̂) is computationally indistinguishable from (Â, uniform) given small s,e. Security: the best known classical attack is primal lattice sieving with cost ~2^¹⁴³ (ML-KEM-768); the best known quantum attack (Grover-accelerated sieving) costs ~2^¹²⁷. The error addition is what makes this a 'learning with errors' instance rather than a plain linear system — without e, an adversary could extract s in O(n³) via linear algebra.",
        color:"#fb923c",type:"compute",
        algRef:"Alg 13 line 15",
        pseudo:[
@@ -240,7 +240,7 @@ const PHASES = [
        ]},
       {name:"Key Encoding & Output",
        math:"ek = ByteEncode₁₂(t̂) ‖ ρ    dk = ByteEncode₁₂(ŝ) ‖ ek ‖ H(ek) ‖ z",
-       desc:"Encapsulation key (pk): encoded t̂ + seed ρ (enables Â regeneration). Decapsulation key (sk) bundles: encoded ŝ, the full ek (for FO re-encryption), H(ek) = SHA3-256(ek), and implicit-rejection seed z ∈ 𝔹³² from the RBG. FIPS 203 Alg 16 lines 4-7.",
+       desc:"Implementation: ByteEncode₁₂ packs 256 12-bit coefficients into 384 bytes per polynomial (Alg 5). ek = 384k + 32 bytes. dk layout: dkPKE (384k bytes) ‖ ek (384k+32 bytes) ‖ H(ek) (32 bytes, SHA3-256) ‖ z (32 bytes from RBG). dk total = 768k + 96 bytes. Sizes: ML-KEM-512: ek=800, dk=1632. ML-KEM-768: ek=1184, dk=2400. ML-KEM-1024: ek=1568, dk=3168. Security: H(ek) is precomputed and stored in dk to bind the encapsulation key into the FO hash during decapsulation — this prevents an attacker from substituting a different ek during key transport (key-substitution attacks / Chosen-Ciphertext Key Mismatch). The rejection seed z is generated independently from the key material and kept secret — it enables implicit rejection without leaking whether decapsulation succeeded or failed, which is essential for IND-CCA2 security.",
        color:"#22d3ee",type:"output",
        algRef:"Alg 13 lines 16-20, Alg 16 lines 1-7",
        pseudo:[
@@ -273,7 +273,7 @@ const PHASES = [
     layers:[
       {name:"Message Generation",
        math:"m ←$ 𝔹³²",
-       desc:"Uniformly random 256-bit value (32 bytes) from an approved RBG. This is NOT plaintext — it is an ephemeral seed from which noise vectors and the shared secret K are both deterministically derived via the FO transform. FIPS 203 Alg 17 uses m passed from Alg 20.",
+       desc:"Implementation: draw 32 bytes from an approved DRBG (NIST SP 800-90A). This is NOT a user message — it is an internal random seed from which the FO transform deterministically derives all encryption noise and the shared secret. Must never be reused. Alg 20 calls RBG then passes m into Alg 17. Security: m must have full 256-bit entropy — if the RBG is weak or predictable, an attacker can enumerate candidate m values, re-derive (K̄, r), re-encrypt, and check against the ciphertext. This is a total break. FIPS 203 requires an SP 800-90A approved DRBG (CTR_DRBG or Hash_DRBG) seeded with sufficient entropy. The deterministic derivation of all randomness from m is intentional — it enables the FO re-encryption check in decapsulation.",
        color:"#94a3b8",type:"input",
        algRef:"Alg 20 line 1, Alg 17 input",
        pseudo:[
@@ -282,7 +282,7 @@ const PHASES = [
        ]},
       {name:"Noise Derivation",
        math:"(K̄, r) ← G(m ‖ H(ek))  then  y,e₁,e₂ ← PRF(r, N++)",
-       desc:"SHA3-512 first derives (K̄, r) from m and the public key hash. K̄ becomes the shared secret; r is the deterministic randomness coin. Then SHAKE-256 as PRF with incrementing counter N expands r into noise vectors y (ephemeral secret), e₁, e₂. This determinism enables the FO re-encryption check in decapsulation.",
+       desc:"Implementation: G = SHA3-512 on (m[0..31] ‖ H(ek)[0..31]) yields 64 bytes. K̄ = bytes[0..31] (raw shared secret). r = bytes[32..63] (noise derivation coin). Then PRF = SHAKE-256(r ‖ N) generates: y[0..k-1] via CBD_η₁ (N=0..k-1), e₁[0..k-1] via CBD_η₂ (N=k..2k-1), e₂ via CBD_η₂ (N=2k). η₂=2 for all parameter sets. Security: hashing m with H(ek) binds the shared secret to this specific public key — prevents multi-key attacks where an adversary intercepts ciphertexts and tries them against multiple public keys. The deterministic derivation of all noise from r is the core of the Fujisaki-Okamoto transform: it converts the IND-CPA secure K-PKE into an IND-CCA2 secure KEM by making encryption a deterministic function of m, allowing the decapsulator to verify ciphertext integrity by re-encryption.",
        color:"#f59e0b",type:"expand",
        algRef:"Alg 17 line 1 → Alg 14 lines 9-19",
        pseudo:[
@@ -297,7 +297,7 @@ const PHASES = [
        ]},
       {name:"NTT (Number Theoretic Transform) of Ephemeral",
        math:"ŷ[i] = NTT(y[i])   ∀i",
-       desc:"Forward NTT on the ephemeral vector y (small CBD-sampled coefficients) for efficient matrix multiply in NTT domain. Used once in this encapsulation then discarded with all other ephemeral state.",
+       desc:"Implementation: same 7-layer butterfly as keygen NTT, applied to k polynomials of y. Produces ŷ in evaluation domain for the matrix-vector multiply and inner product steps that follow. e₁ and e₂ remain in coefficient domain — they are added after INTT. Security: the ephemeral vector y must be zeroized immediately after use along with all other encapsulation intermediates. If y leaks (e.g., via cold-boot attack or memory dump), an attacker can compute u − Aᵀy = e₁ and v − tᵀy − e₂ to recover m directly, bypassing the M-LWE problem entirely. The NTT of y is equally sensitive.",
        color:"#a78bfa",type:"transform",
        algRef:"Alg 14 line 20",
        pseudo:[
@@ -306,7 +306,7 @@ const PHASES = [
        ]},
       {name:"Compute u",
        math:"u = NTT⁻¹(Âᵀ ∘ ŷ) + e₁",
-       desc:"Transpose matrix-vector multiply in NTT domain, then inverse NTT to coefficient domain, then add error e₁. This is u = Aᵀ·y + e₁, the sender's half of the shared lattice computation. Â is regenerated from ρ in ek.",
+       desc:"Implementation: regenerate Â from ρ (stored in ek). Transpose access: Âᵀ[i][j] = Â[j][i]. Multiply via MultiplyNTTs (Alg 11), accumulate k products per row, then INTT (Alg 10, 7-layer inverse butterfly with ζ⁻¹=1175, final multiply by 128⁻¹=3303 mod q). Add e₁ coefficient-wise. Result u has coefficients in [0, q). Security: u = Aᵀy + e₁ creates a second M-LWE instance independent of the keygen instance t = As + e. The transpose Aᵀ ensures the encapsulator's ephemeral secret y cannot be trivially related to the static secret s. The error e₁ with η₂=2 is essential — without it, u would be exactly Aᵀy, and an adversary with the public key could recover y via linear algebra, then compute tᵀy and extract m from v.",
        color:"#f87171",type:"compute",
        algRef:"Alg 14 line 21",
        pseudo:[
@@ -314,7 +314,7 @@ const PHASES = [
        ]},
       {name:"Compress u",
        math:"c₁ = ByteEncode_du(Compress_du(u))",
-       desc:"Lossy rounding: each coefficient mapped from [0,q) → [0,2^du) via ⌈(2^du/q)·x⌋. du=10 for ML-KEM-768. Introduces permanent bounded rounding error |ε| ≤ q/(2·2^du). Saves bandwidth (~500 B for ML-KEM-768). Compression cannot be done in NTT domain.",
+       desc:"Implementation: Compress_du(x) = ⌈(2^du / q) · x⌋ mod 2^du for each coefficient. du=10 (ML-KEM-768): maps [0,3328] → [0,1023], introduces rounding error ≤ q/(2^11) ≈ 1.6. ByteEncode packs du-bit values: 10-bit → 5 bytes per 4 coefficients. Output size: 32·du·k bytes (ML-KEM-768: 960 bytes). du=11 for ML-KEM-1024. Security: compression is a deliberate lossy operation that trades ciphertext size for decryption noise. The rounding error is permanent and contributes to the total noise budget. Importantly, compression also serves a security function: it destroys the exact algebraic relationship between u and y, making certain lattice reduction attacks harder because the adversary only sees an approximate version of Aᵀy + e₁. The du parameter is chosen so compression noise stays well within the correctness bound while minimizing bandwidth.",
        color:"#38bdf8",type:"compress",
        algRef:"Alg 14 line 23",
        pseudo:[
@@ -322,7 +322,7 @@ const PHASES = [
        ]},
       {name:"Compute v",
        math:"v = NTT⁻¹(t̂ᵀ ∘ ŷ) + e₂ + Decompress₁(m)",
-       desc:"Inner product of public key t̂ with ephemeral ŷ in NTT domain, inverse NTT, add error e₂, then encode message. Decompress₁ maps each bit: 0→0, 1→⌈q/2⌋=1665. This places each message bit at maximum distance from decision boundary in ℤ_q, maximizing noise tolerance.",
+       desc:"Implementation: decode t̂ from ek via ByteDecode₁₂. Inner product t̂ᵀ∘ŷ = Σ t̂[i]∘ŷ[i] (k MultiplyNTTs + accumulate), then INTT. Add e₂ coefficient-wise. Decompress₁(m): for each bit b of m, output b·⌈q/2⌋ = b·1665. This places message bits at maximum distance from the rounding boundary q/4 ≈ 832. Security: encoding m at the midpoint ⌈q/2⌋ is a standard technique from Regev's original LWE encryption — it maximizes the noise tolerance by placing the two symbols (0 and ⌈q/2⌋) as far apart as possible in ℤ_q. The error e₂ prevents v from being an exact function of the public values (t, y) and the message m, which would allow a key-recovery attack via the relation v − tᵀy − Decompress₁(m) = e₂.",
        color:"#f87171",type:"compute",
        algRef:"Alg 14 line 22",
        pseudo:[
@@ -331,7 +331,7 @@ const PHASES = [
        ]},
       {name:"Compress v",
        math:"c₂ = ByteEncode_dv(Compress_dv(v))",
-       desc:"Aggressive compression: dv=4 for ML-KEM-768 (12-bit coefficients → 4-bit). Combined noise budget from LWE error + Compress(u) rounding + Compress(v) rounding must stay below q/4 ≈ 832 for correct decryption. This is always satisfied for valid ciphertexts.",
+       desc:"Implementation: Compress_dv(x) = ⌈(2^dv / q) · x⌋ mod 2^dv. dv=4 (ML-KEM-768): maps [0,3328] → [0,15], aggressive 12→4 bit reduction. Rounding error ≤ q/(2^5) ≈ 104. Combined noise budget: |eᵀy + e₂ − sᵀe₁| + compress(u) error + compress(v) error must stay < q/4 = 832. Output: 32·dv bytes (ML-KEM-768: 128 bytes). dv=5 for ML-KEM-1024. Security: v compression is the most aggressive step — dv=4 discards 8 bits per coefficient. This is where the correctness-security tradeoff is tightest. If dv were smaller (more aggressive), the compression noise could push total error past q/4, causing decryption failures. Decryption failures are a security concern: Guo-Johansson-Stebila showed that an adversary who can observe whether decapsulation fails can mount a key-recovery attack in ~2²⁰ queries for certain failure rates. ML-KEM's parameters ensure failure probability ≈ 2⁻¹⁶⁴, making this attack infeasible.",
        color:"#38bdf8",type:"compress",
        algRef:"Alg 14 line 24",
        pseudo:[
@@ -339,7 +339,7 @@ const PHASES = [
        ]},
       {name:"Output Ciphertext & Key",
        math:"c = (c₁ ‖ c₂)    K = SHA3-256(K̄)",
-       desc:"Ciphertext: concatenation of compressed u and v. Shared secret K = SHA3-256(K̄) where K̄ is the first 32 bytes from G(m ‖ H(ek)). K is used as the symmetric key for subsequent AEAD encryption. Both c and K are returned. FIPS 203 Alg 17 lines 2-3.",
+       desc:"Implementation: concatenate c₁ (32·du·k bytes) and c₂ (32·dv bytes). Ciphertext sizes: ML-KEM-512: 768 B, ML-KEM-768: 1088 B, ML-KEM-1024: 1568 B. Shared secret K = SHA3-256(K̄) where K̄ = G(m ‖ H(ek))[0..31]. K is the 32-byte key for subsequent AEAD (e.g., AES-256-GCM). Zeroize m, K̄, r, y, e₁, e₂ after use. Security: the final SHA3-256 hash of K̄ provides a clean pseudorandom 256-bit shared secret even if K̄ has minor structural biases from the G derivation. Immediate zeroization of ephemeral values is critical — if m persists in memory, an attacker who compromises the encapsulator after the protocol completes can recompute K. This is the 'forward secrecy' concern: each encapsulation should use fresh m from the RBG, and ephemeral state should not survive the operation.",
        color:"#f59e0b",type:"output",
        algRef:"Alg 14 line 25, Alg 17 lines 2-3",
        pseudo:[
@@ -365,12 +365,12 @@ const PHASES = [
       {from:6,to:7,label:"pass/fail",type:"seq"},
     ],
     loops:[
-      {from:6,to:0,label:"FO: re-encrypt m'→c*, compare c*≟c",color:"#e879f9",desc:"Fujisaki-Okamoto implicit rejection: deterministically re-run K-PKE.Encrypt(ek, m', r'). All noise re-derived from m' via G(m' ‖ H(ek)) → (K̄', r') → PRF(r', N++). If c*≠c, ciphertext was malformed (chosen-ciphertext attack). Output pseudorandom K̄=J(z‖c) using SHAKE-256 instead. Attacker cannot distinguish real from rejection K̄. Converts CPA→CCA2 security."},
+      {from:6,to:0,label:"FO: re-encrypt m'→c*, compare c*≟c",color:"#e879f9",desc:"Fujisaki-Okamoto (FO⊥ₘ) implicit rejection: deterministically re-run K-PKE.Encrypt(ek, m', r') with noise re-derived from m' via G(m' ‖ H(ek)) → (K̄', r') → PRF(r', N++). If c*≠c, ciphertext was tampered (chosen-ciphertext attack). Output pseudorandom K̄=J(z‖c) via SHAKE-256 — attacker cannot distinguish real from rejection K̄. This converts CPA→CCA2 security. Without this check, Bleichenbacher-style adaptive attacks on the ciphertext allow key recovery. Constant-time comparison and branch-free selection are mandatory to prevent timing oracles."},
     ],
     layers:[
       {name:"Receive Ciphertext",
        math:"c = (c₁, c₂)",
-       desc:"Parse the ciphertext into its two compressed components. c₁ encodes the compressed u vector, c₂ encodes compressed v scalar polynomial. Both have reduced bit-width from the encapsulator's compression.",
+       desc:"Implementation: parse dk into four fields at fixed offsets — dkPKE = dk[0 : 384k], ek = dk[384k : 768k+32], h = dk[768k+32 : 768k+64] (precomputed H(ek)), z = dk[768k+64 : 768k+96] (rejection seed). Parse ciphertext c into c₁ = c[0 : 32·du·k] and c₂ = c[32·du·k :]. All offsets are compile-time constants per parameter set. Security: the decapsulation key must be stored in secure memory with access controls — it contains the long-term secret ŝ (in dkPKE), the rejection seed z, and the cached H(ek). An attacker with dk can compute all shared secrets for any ciphertext. FIPS 203 mandates that dk is generated and stored in a FIPS 140-3 validated cryptographic module. Input validation: implementations should verify ciphertext length before parsing to prevent buffer overflows.",
        color:"#94a3b8",type:"input",
        algRef:"Alg 18 input, Alg 15 line 1",
        pseudo:[
@@ -383,7 +383,7 @@ const PHASES = [
        ]},
       {name:"Decompress",
        math:"u' = Decompress_du(ByteDecode_du(c₁))    v' = Decompress_dv(ByteDecode_dv(c₂))",
-       desc:"Scale back from [0,2^d) to [0,q) via ⌈(q/2^d)·x⌋. Does NOT recover exact originals — the rounding error from compression is permanent (Lemma 1: |ε| ≤ q/(2p) + 1/2) and adds to the total noise budget.",
+       desc:"Implementation: ByteDecode_du unpacks du-bit values from byte array. Decompress_du(x) = ⌈(q / 2^du) · x⌋ = (q · x + 2^(du-1)) >> du. Introduces permanent additive error |ε| ≤ ⌈q / 2^(du+1)⌉. For du=10: error ≤ 2. For dv=4: error ≤ 104. These errors accumulate with the LWE noise but remain within the correctness bound. Security: decompression is applied to untrusted data (the ciphertext comes from the network). Implementations must ensure Decompress produces values in [0, q) for all inputs in [0, 2^d) — out-of-range coefficients could cause modular arithmetic errors that leak information about the secret key. This is a known attack vector: Bauer-Iglesias showed that malformed ciphertexts with out-of-range coefficients can induce side-channel leakage in some implementations.",
        color:"#38bdf8",type:"compress",
        algRef:"Alg 15 lines 2-5",
        pseudo:[
@@ -394,7 +394,7 @@ const PHASES = [
        ]},
       {name:"NTT (Number Theoretic Transform) of u'",
        math:"û' = NTT(u')",
-       desc:"Forward NTT on decompressed u' for efficient multiplication with the stored secret key ŝ (already in NTT domain from keygen). This avoids expensive polynomial multiplication in coefficient domain.",
+       desc:"Implementation: apply forward NTT (Alg 9) to each of k polynomials in u'. Required because ŝ is stored in NTT domain from keygen — both operands must be in the same domain for pointwise multiplication. 7 × 128 × k multiply-reduce operations. Security: the NTT here operates on attacker-controlled data (decompressed ciphertext). While the NTT itself is a public linear transform, implementations must ensure constant-time execution — variable-time reduction mod q on attacker-chosen inputs could leak timing information about intermediate values that correlate with the secret key in the subsequent multiplication step.",
        color:"#a78bfa",type:"transform",
        algRef:"Alg 15 (implicit in line 6)",
        pseudo:[
@@ -403,7 +403,7 @@ const PHASES = [
        ]},
       {name:"Secret · Ciphertext",
        math:"w = NTT⁻¹(ŝᵀ ∘ û')",
-       desc:"Core decryption inner product: sᵀ·u' ≈ sᵀ·(Aᵀ·y + e₁) = sᵀ·Aᵀ·y + sᵀ·e₁ + rounding noise. The sᵀ·Aᵀ·y = (A·s)ᵀ·y = tᵀ·y term is what cancels against v in the next step.",
+       desc:"Implementation: decode ŝ from dkPKE via ByteDecode₁₂ (384 bytes per polynomial → 256 12-bit coefficients). Inner product: Σ ŝ[i] ∘ û'[i] using MultiplyNTTs (k × 128 base-case multiplies), accumulate, then INTT. Result w ≈ sᵀ(Aᵀy + e₁) = sᵀAᵀy + sᵀe₁ + compression noise. Security: this is the most sensitive computation in decapsulation — it directly multiplies the long-term secret ŝ with attacker-controlled data û'. Power analysis (DPA/SPA), electromagnetic emanation, and cache-timing attacks on this multiplication are the primary implementation-level threat. All MultiplyNTTs base-case operations must be constant-time: no branching on coefficient values, no variable-time Barrett/Montgomery reduction, no data-dependent memory access patterns.",
        color:"#f87171",type:"compute",
        algRef:"Alg 15 line 6",
        pseudo:[
@@ -412,7 +412,7 @@ const PHASES = [
        ]},
       {name:"Subtract & Isolate",
        math:"m̃ = v' − w  ≈  ⌈q/2⌋·m + ε_total",
-       desc:"KEY CANCELLATION: v' ≈ tᵀy+e₂+⌈q/2⌋m and w ≈ sᵀAᵀy+sᵀe₁. Since t=As+e, we get tᵀy = (As+e)ᵀy = sᵀAᵀy + eᵀy. So: v'−w ≈ eᵀy + e₂ − sᵀe₁ + ⌈q/2⌋m + rounding. The residual ε_total = eᵀy + e₂ − sᵀe₁ + compression noise is small because all noise terms have small coefficients.",
+       desc:"Implementation: coefficient-wise subtraction mod q (if result < 0, add q). Algebraically: v' − w ≈ (tᵀy + e₂ + ⌈q/2⌋m) − (sᵀAᵀy + sᵀe₁). Since t = As + e, tᵀy = sᵀAᵀy + eᵀy, so the sᵀAᵀy terms cancel. Remainder: ⌈q/2⌋·m + (eᵀy + e₂ − sᵀe₁) + compression noise. All noise coefficients are bounded by the parameter-set-specific δ. Security: the key cancellation property is the mathematical heart of LWE-based encryption — it relies on the fact that both parties can independently compute sᵀAᵀy (the keygen party via s directly, the encryption party via the public key t = As + e). The residual noise ε = eᵀy + e₂ − sᵀe₁ is a sum of products of small-coefficient polynomials, and its magnitude is statistically bounded. An adversary who does not know s cannot compute w, so they cannot isolate the message from v.",
        color:"#f87171",type:"compute",
        algRef:"Alg 15 line 7 (partial)",
        pseudo:[
@@ -420,7 +420,7 @@ const PHASES = [
        ]},
       {name:"Decode Message",
        math:"m' = Compress₁(m̃):  m'[i] = ⌈(2/q)·m̃[i]⌋ mod 2",
-       desc:"Compress₁ rounds each of 256 coefficients to {0,1}. Values near 0 → 0, values near q/2=1665 → 1. The decision boundary is at q/4 ≈ 832. Since |ε_total| < q/4 always holds for valid ciphertexts, no bit flips occur. Decryption failure probability ≈ 2⁻¹⁶⁴ for ML-KEM-768.",
+       desc:"Implementation: Compress₁(x) = ((x << 1) + q/2) / q & 1, or equivalently test whether x is closer to 0 or to ⌈q/2⌋ = 1665. Decision boundary at q/4 ≈ 832. For ML-KEM-768, max |ε_total| is bounded such that decryption failure probability ≈ 2⁻¹⁶⁴. Output: 32 bytes (256 bits). Security: the decryption failure probability (DFP) is a critical security parameter, not just a correctness concern. D'Anvers-Guo-Johansson-Stebila-Nilsson showed that decryption failures leak information about the secret key — an adversary who can detect failures (e.g., by observing whether a TLS handshake succeeds) can mount adaptive chosen-ciphertext attacks to recover s in roughly 2^(DFP_exponent) queries. ML-KEM's DFP of 2⁻¹⁶⁴ makes this attack require more queries than the security level, rendering it infeasible. The implicit rejection mechanism (next steps) provides additional defense.",
        color:"#34d399",type:"decode",
        algRef:"Alg 15 line 7",
        pseudo:[
@@ -428,7 +428,7 @@ const PHASES = [
        ]},
       {name:"FO Re-Encrypt & Compare",
        math:"(K̄', r') ← G(m' ‖ h);  c' ← K-PKE.Encrypt(ek, m', r');  c' ≟ c",
-       desc:"FUJISAKI-OKAMOTO TRANSFORM: deterministically re-encrypt recovered m' using the stored ek. All noise vectors re-derived identically from r' via PRF. If m'=m, then r'=r and c'=c exactly. Constant-time comparison prevents timing side-channels.",
+       desc:"Implementation: recompute (K̄', r') = SHA3-512(m' ‖ h) using stored h = H(ek). Re-run full K-PKE.Encrypt: regenerate Â from ρ, re-sample y,e₁,e₂ from r' via PRF, compute u',v', compress. Constant-time byte comparison of c' vs c (no early exit). If mismatch: K̄ = SHAKE-256(z ‖ c) using secret rejection seed z. Both paths must execute in constant time to prevent timing oracles. Security: this is the Fujisaki-Okamoto (FO⊥ₘ) transform — it upgrades K-PKE from IND-CPA to IND-CCA2. Without it, the scheme would be vulnerable to chosen-ciphertext attacks: an adversary could modify a valid ciphertext, submit it for decapsulation, and learn about m from the resulting shared secret. The re-encryption check detects any ciphertext tampering. Implicit rejection (outputting pseudorandom K from z rather than ⊥) prevents Bleichenbacher-style oracles: the adversary cannot distinguish valid from invalid ciphertexts, eliminating adaptive attacks that exploit decapsulation failure signals in protocols like TLS.",
        color:"#e879f9",type:"verify",
        algRef:"Alg 18 lines 6-9",
        pseudo:[
@@ -440,7 +440,7 @@ const PHASES = [
        ]},
       {name:"Shared Secret Output",
        math:"K = K̄  (either SHA3-256(K̄') if match, or J(z‖c) if reject)",
-       desc:"Match path: K=SHA3-256(K̄'), identical to encapsulator's K. Rejection path: K=J(z‖c) using SHAKE-256 with secret seed z and the full ciphertext. The adversary cannot distinguish which path was taken — this provides IND-CCA2 security. z is never revealed.",
+       desc:"Implementation: conditional assignment K̄ = ct_select(SHA3-256(K̄'), SHAKE-256(z ‖ c), match_flag) must use constant-time select (e.g., bitwise mask from comparison result). Output K̄ as the 32-byte shared secret. Zeroize all intermediate values: m', K̄', r', c', ŝ, z. The adversary gains zero information about which branch was taken — this provides IND-CCA2 security per FO⊥ₘ transform proof. Security: the rejection key J(z ‖ c) is deterministic in c — if the same malformed ciphertext is submitted twice, the same rejection key is produced. This prevents an adversary from using randomness in the rejection output as a side-channel. Including c in the rejection hash ensures different malformed ciphertexts produce independent-looking keys, preventing cross-ciphertext correlation attacks. The secret seed z must have been generated at keygen time with full 256-bit entropy and never exposed — if z leaks, the adversary can distinguish rejection from acceptance.",
        color:"#34d399",type:"output",
        algRef:"Alg 18 lines 10-11",
        pseudo:[
@@ -458,34 +458,34 @@ const PHASES = [
 // ═══════════════════════════════════════════════════════════════
 const SUMMARIES = {
   keygen: [
-    "SHA3-512 hashes 32-byte random seed d concatenated with security-level byte k, producing public seed ρ (32 bytes, used to generate matrix Â) and secret seed σ (32 bytes, used to sample secret and error vectors)",
-    "SHAKE-128 (XOF) deterministically expands public seed ρ into k² polynomials in NTT domain, each with 256 coefficients in ℤ₃₃₂₉ — forms the shared public matrix Â via rejection sampling to ensure uniform distribution",
-    "Centered Binomial Distribution samples secret vector s: for each of k polynomials, SHAKE-256 as PRF produces 2η₁ random bytes per coefficient, split and subtracted to yield coefficients in [−η₁, η₁] — this is the private key core",
-    "Same CBD process with incremented counter N produces error vector e — this noise masks the exact relationship between the public matrix and secret vector, making the public key computationally indistinguishable from random under the Module-LWE assumption",
-    "Forward Number Theoretic Transform converts secret vector s and error vector e from coefficient domain to evaluation form at powers of ζ=17 (primitive 256th root of unity mod q=3329), enabling O(n log n) polynomial multiplication in the next step",
-    "Matrix-vector multiplication in NTT domain: for each of k rows, compute the inner product Â[i][j] ∘ ŝ[j] using 128 base-case multiplies of degree-1 polynomials per pointwise product — total of k²×128 base-case multiplications",
-    "Pointwise addition of error vector ê to the matrix-vector product in NTT domain completes the Module-LWE instance t̂ = Â∘ŝ + ê — recovering s from the public pair (Â, t̂) requires solving M-LWE, believed hard for quantum adversaries",
-    "Encapsulation key: ByteEncode₁₂(t̂) concatenated with ρ (enables Â regeneration). Decapsulation key bundles: encoded ŝ, the full encapsulation key, H(ek) = SHA3-256(ek), and implicit-rejection seed z (32 bytes from RBG) per FIPS 203 Algorithm 16",
+    "Hash one 32-byte seed into two independent sub-seeds (ρ, σ) via SHA3-512",
+    "Expand ρ into a k×k matrix of degree-255 polynomials mod q = 3329",
+    "Sample k secret polynomials with small random coefficients in [−η₁, η₁]",
+    "Sample k noise polynomials from the same small-coefficient distribution",
+    "Apply forward NTT to convert s and e from coefficient form to evaluation form",
+    "Compute Â·ŝ — k² pointwise polynomial multiplications in NTT domain",
+    "Add ê to get t̂ = Â·ŝ + ê — this is the Module-LWE public key vector",
+    "Serialize public key (t̂, ρ) and private key (ŝ, ek, H(ek), z) to byte arrays",
   ],
   encaps: [
-    "Uniformly random 256-bit ephemeral value m drawn from an approved RBG — this is not plaintext but a seed from which noise vectors and the shared secret K are both deterministically derived via the Fujisaki-Okamoto transform",
-    "SHA3-512 derives (K̄, r) from m concatenated with SHA3-256 hash of encapsulation key: K̄ becomes the raw shared secret material, r is the deterministic randomness coin that drives all ephemeral noise sampling — this determinism enables the re-encryption check in decapsulation",
-    "Forward NTT on the ephemeral vector y (CBD-sampled small coefficients) converts it to evaluation form for efficient matrix-vector multiplication in the NTT domain — used once during this encapsulation then discarded with all other ephemeral state",
-    "Transpose matrix-vector multiply Âᵀ∘ŷ in NTT domain, inverse NTT back to coefficient domain, then add error vector e₁ — computes u = Aᵀ·y + e₁, the sender's half of the shared lattice computation using the public matrix Â regenerated from ρ",
-    "Lossy compression of ciphertext u: each coefficient mapped from [0, q) to [0, 2^du) via rounding, introducing permanent bounded error |ε| ≤ q/(2·2^du). For ML-KEM-768 with du=10, this reduces from 12-bit to 10-bit coefficients saving approximately 500 bytes",
-    "Inner product of public key t̂ with ephemeral ŷ in NTT domain, inverse NTT, then add error e₂ and Decompress₁(m) which maps each message bit: 0→0, 1→⌈q/2⌋=1665 — places message bits at maximum distance from the decision boundary in ℤ_q for optimal noise tolerance",
-    "Aggressive compression of v with dv=4 for ML-KEM-768: 12-bit coefficients reduced to 4-bit. The combined noise budget from LWE error, Compress(u) rounding, and Compress(v) rounding must remain below q/4 ≈ 832 for correct decryption — always satisfied for valid ciphertexts",
-    "Ciphertext c = (c₁ ‖ c₂) is the concatenation of compressed u and v. Shared secret K = SHA3-256(K̄) where K̄ is the first 32 bytes from G(m ‖ H(ek)), returned as the 32-byte symmetric key for subsequent AEAD encryption alongside ciphertext c",
+    "Draw 32 random bytes m — the ephemeral seed for all encryption randomness",
+    "SHA3-512(m ‖ H(ek)) → shared secret material K̄ + deterministic noise coin r",
+    "Forward NTT on ephemeral vector y for efficient polynomial multiplication",
+    "u = NTT⁻¹(Âᵀ·ŷ) + e₁ — matrix-vector multiply plus noise in coefficient domain",
+    "Lossy-round u from 12-bit to du-bit coefficients (compress to save bandwidth)",
+    "v = NTT⁻¹(t̂ᵀ·ŷ) + e₂ + ⌈q/2⌋·m — inner product plus encoded message bits",
+    "Lossy-round v from 12-bit to dv-bit (most aggressive compression step)",
+    "Output ciphertext c = (c₁ ‖ c₂) and shared secret K = SHA3-256(K̄)",
   ],
   decaps: [
-    "Parse the received ciphertext into compressed components c₁ (encoding u) and c₂ (encoding v), and extract decapsulation key components: encoded secret ŝ, full encapsulation key ek, stored hash h = H(ek), and implicit-rejection seed z",
-    "Reverse lossy compression: scale values from [0, 2^d) back to [0, q) via ⌈(q/2^d)·x⌋. This does not recover exact originals — the rounding error from compression is permanent per Lemma 1: |ε| ≤ q/(2p) + 1/2, adding to the total noise budget",
-    "Forward NTT on decompressed u' for efficient multiplication with the stored secret key ŝ (already in NTT domain from keygen) — avoids expensive O(n²) polynomial multiplication in coefficient domain",
-    "Core decryption inner product: w = NTT⁻¹(ŝᵀ ∘ û') computes sᵀ·u' ≈ sᵀ·Aᵀ·y + sᵀ·e₁ + rounding noise. The sᵀ·Aᵀ·y = tᵀ·y term is what cancels against v in the next subtraction step",
-    "Key cancellation: v' − w ≈ eᵀy + e₂ − sᵀe₁ + ⌈q/2⌋·m + compression noise. Since t = As+e, the shared lattice terms cancel leaving residual ε_total = eᵀy + e₂ − sᵀe₁ + rounding, which is small because all noise terms have small coefficients",
-    "Compress₁ rounds each of 256 coefficients to {0, 1}: values near 0 map to 0, values near q/2=1665 map to 1, with decision boundary at q/4 ≈ 832. Since |ε_total| < q/4 always holds for valid ciphertexts, no bits flip — decryption failure probability ≈ 2⁻¹⁶⁴ for ML-KEM-768",
-    "Fujisaki-Okamoto implicit rejection: deterministically re-derive (K̄', r') from recovered m' via G(m' ‖ h), re-run full K-PKE.Encrypt with all noise vectors re-derived identically from r'. Constant-time comparison c' ≟ c — if mismatch, output K̄ = J(z ‖ c) via SHAKE-256 using secret seed z",
-    "Match path: K = SHA3-256(K̄'), identical to encapsulator's output. Rejection path: K = SHAKE-256(z ‖ c) using secret seed z and full ciphertext — adversary cannot distinguish which path was taken, providing IND-CCA2 security. The seed z is never revealed",
+    "Parse ciphertext into compressed components c₁, c₂ and extract dk fields",
+    "Decompress: scale values from [0, 2^d) back to approximate [0, q) representation",
+    "Forward NTT on decompressed u′ to match the stored NTT-domain secret ŝ",
+    "Inner product w = NTT⁻¹(ŝᵀ·û′) — approximates the shared lattice point",
+    "v′ − w cancels shared terms, isolating ⌈q/2⌋·m + small residual noise ε",
+    "Round each coefficient to {0,1} — noise is bounded below q/4 so no bits flip",
+    "Re-encrypt m′ deterministically and compare c′ ≟ c (Fujisaki-Okamoto check)",
+    "Output K = SHA3-256(K̄′) if match, or K = SHAKE-256(z ‖ c) if reject",
   ],
 };
 
@@ -559,8 +559,8 @@ function renderFlowchart() {
   layers.forEach((l, i) => {
     svg += `<linearGradient id="lg${i}" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stop-color="${l.color}" stop-opacity="${selectedIdx===i?'0.2':'0.12'}"/><stop offset="100%" stop-color="${l.color}" stop-opacity="0.03"/></linearGradient>`;
   });
-  svg += `<marker id="am" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 1L7 4L0 7Z" fill="#8899aa"/></marker>`;
-  svg += `<marker id="amc" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 1L7 4L0 7Z" fill="#e879f9"/></marker>`;
+  svg += `<marker id="am" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 1L7 4L0 7Z" fill="#b0bec5"/></marker>`;
+  svg += `<marker id="amc" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 1L7 4L0 7Z" fill="#e879f9"/></marker>`;
   svg += `</defs>`;
 
   // Sequential flows
@@ -569,8 +569,8 @@ function renderFlowchart() {
     const y2 = getY(f.to) - 1;
     const mx = nodeX + nodeW/2;
     const fc = layers[f.from].color;
-    svg += `<line x1="${mx}" y1="${y1}" x2="${mx}" y2="${y2}" stroke="${fc}" stroke-width="1.8" stroke-opacity="0.55" marker-end="url(#am)"/>`;
-    svg += `<text x="${mx+10}" y="${(y1+y2)/2+3}" font-size="8" font-family="'Courier New',monospace" fill="${fc}" fill-opacity="0.7">${f.label}</text>`;
+    svg += `<line x1="${mx}" y1="${y1}" x2="${mx}" y2="${y2}" stroke="${fc}" stroke-width="2" stroke-opacity="0.8" marker-end="url(#am)"/>`;
+    svg += `<text x="${mx+10}" y="${(y1+y2)/2+3}" font-size="8" font-family="'Courier New',monospace" fill="${fc}" fill-opacity="0.9">${f.label}</text>`;
   });
 
   // Non-sequential / data flows
@@ -584,8 +584,8 @@ function renderFlowchart() {
     const bulge = isLeft ? nodeX - 20 - gap*4 : nodeX + nodeW + 20 + gap*4;
     const fc = layers[f.from].color;
     const midY = (fromY + toY) / 2;
-    svg += `<path d="M${side} ${fromY} C${bulge} ${fromY},${bulge} ${toY},${side} ${toY}" fill="none" stroke="${fc}" stroke-width="1.3" stroke-opacity="0.5" stroke-dasharray="4,2" marker-end="url(#am)"/>`;
-    svg += `<text x="${bulge+(isLeft?-3:3)}" y="${midY+3}" font-size="7" font-family="'Courier New',monospace" fill="${fc}" fill-opacity="0.75" text-anchor="${isLeft?'end':'start'}">${f.label}</text>`;
+    svg += `<path d="M${side} ${fromY} C${bulge} ${fromY},${bulge} ${toY},${side} ${toY}" fill="none" stroke="${fc}" stroke-width="1.8" stroke-opacity="0.85" stroke-dasharray="5,2" marker-end="url(#am)"/>`;
+    svg += `<text x="${bulge+(isLeft?-3:3)}" y="${midY+3}" font-size="8" font-family="'Courier New',monospace" fill="${fc}" fill-opacity="1" text-anchor="${isLeft?'end':'start'}">${f.label}</text>`;
     dataFlowIdx++;
   });
 
@@ -594,8 +594,8 @@ function renderFlowchart() {
     const fromY = getCY(loop.from);
     const toY = getCY(loop.to);
     const rx = nodeX + nodeW + 40;
-    svg += `<path d="M${nodeX+nodeW+4} ${fromY} C${rx+12} ${fromY},${rx+12} ${toY},${nodeX+nodeW+4} ${toY}" fill="none" stroke="${loop.color}" stroke-width="1.8" stroke-opacity="0.65" stroke-dasharray="5,3" marker-end="url(#amc)"/>`;
-    svg += `<text x="${rx+6}" y="${(fromY+toY)/2}" font-size="7" font-family="'Courier New',monospace" fill="${loop.color}" fill-opacity="0.85" text-anchor="start" writing-mode="tb">↺ FO loop</text>`;
+    svg += `<path d="M${nodeX+nodeW+4} ${fromY} C${rx+12} ${fromY},${rx+12} ${toY},${nodeX+nodeW+4} ${toY}" fill="none" stroke="${loop.color}" stroke-width="2.2" stroke-opacity="0.9" stroke-dasharray="5,3" marker-end="url(#amc)"/>`;
+    svg += `<text x="${rx+6}" y="${(fromY+toY)/2}" font-size="8" font-family="'Courier New',monospace" fill="${loop.color}" fill-opacity="1" text-anchor="start" writing-mode="tb">↺ FO loop</text>`;
   });
 
   // Nodes
@@ -668,9 +668,6 @@ function renderDetail() {
   let html = `<div class="det-header"><div class="det-dot" style="background:${layer.color}"></div><span class="det-name" style="color:${layer.color}">${layer.name}</span>`;
   if (layer.algRef) html += `<span class="det-alg">${layer.algRef}</span>`;
   html += `<span class="det-type">${layer.type}</span></div>`;
-  if (layer.summary) {
-    html += `<div style="font-size:10px;color:#8896a6;font-style:italic;margin-bottom:5px;line-height:1.5">▸ ${layer.summary}</div>`;
-  }
   html += `<div class="det-math" style="border-color:${layer.color}20">${escHtml(layer.math)}</div>`;
   html += `<div class="det-desc">${layer.desc}</div>`;
 
@@ -711,7 +708,7 @@ let camAngleTarget = { theta: 0.45, phi: 0.55 };
 let camTargetY = 0;
 let isDrag = false, dragStart = { x:0, y:0 };
 let camDist = 9;
-const SPACING = 1.8, SLAB_W = 6.4, SLAB_H = 0.09, SLAB_D = 3.0;
+const SPACING = 2.6, SLAB_W = 6.8, SLAB_H = 0.09, SLAB_D = 3.0;
 
 function makeCanvasTex(drawFn, w, h) {
   const S = 2, c = document.createElement('canvas');
@@ -726,6 +723,7 @@ function makeCanvasTex(drawFn, w, h) {
   return t;
 }
 
+// Returns final y after last line drawn
 function wrapTextCanvas(ctx, text, x, y, maxW, lh, maxLines) {
   const words = text.split(' ');
   let line = '', ly = y, n = 0;
@@ -734,105 +732,164 @@ function wrapTextCanvas(ctx, text, x, y, maxW, lh, maxLines) {
     if (ctx.measureText(test).width > maxW && line) {
       ctx.fillText(line, x, ly);
       line = w; ly += lh; n++;
-      if (maxLines && n >= maxLines) { ctx.fillText(line+'…', x, ly); return; }
+      if (maxLines && n >= maxLines) { ctx.fillText(line+'…', x, ly); return ly + lh; }
     } else line = test;
   }
-  if (line) ctx.fillText(line, x, ly);
+  if (line) { ctx.fillText(line, x, ly); ly += lh; }
+  return ly;
+}
+
+// Count how many wrapped lines text would need at current ctx.font
+function countWrapLines(ctx, text, maxW) {
+  const words = text.split(' ');
+  let line = '', n = 1;
+  for (const w of words) {
+    const test = line + (line?' ':'')+w;
+    if (ctx.measureText(test).width > maxW && line) { line = w; n++; }
+    else line = test;
+  }
+  return n;
+}
+
+// Auto-shrink font from startSz down to minSz until text fits availH, then draw
+function fitTextCanvas(ctx, text, x, y, maxW, availH, color, startSz) {
+  let sz = startSz || 10;
+  const minSz = 7;
+  let lh, nLines;
+  while (sz >= minSz) {
+    ctx.font = sz + 'px sans-serif';
+    lh = Math.round(sz * 1.25);
+    nLines = countWrapLines(ctx, text, maxW);
+    if (nLines * lh <= availH) break;
+    sz -= 0.5;
+  }
+  ctx.font = sz + 'px sans-serif';
+  ctx.fillStyle = color;
+  const maxL = Math.floor(availH / lh);
+  return wrapTextCanvas(ctx, text, x, y, maxW, lh, maxL);
 }
 
 function layerTex(layer, isSel) {
   const hasPseudo = isSel && layer.pseudo && layer.pseudo.length > 0;
   const hasSummary = !!layer.summary;
-  const texH = hasPseudo ? 280 : (hasSummary ? 160 : 120);
-  return makeCanvasTex((ctx, W, H) => {
-    // Background
+  const CW = 740, mW = CW - 28, pad = 14;
+
+  // ── Pre-measure to determine canvas height ──
+  let texH;
+  if (!isSel) {
+    texH = hasSummary ? 140 : 100;
+  } else {
+    // Measure with a scratch canvas
+    const mc = document.createElement('canvas');
+    mc.width = CW; const mx = mc.getContext('2d');
+    let h = 28; // name row
+    if (hasPseudo) {
+      h += 12; // label
+      h += Math.min(layer.pseudo.length, 6) * 13;
+      if (layer.pseudo.length > 6) h += 10;
+      h += 10; // separator
+    }
+    if (hasSummary) {
+      mx.font = 'italic 10px sans-serif';
+      h += countWrapLines(mx, '▸ ' + layer.summary, mW) * 12 + 2;
+    }
+    mx.font = '12px monospace';
+    h += countWrapLines(mx, layer.math, mW) * 14 + 4;
+    // Desc at 10px target
+    mx.font = '10px sans-serif';
+    const descLines = countWrapLines(mx, layer.desc, mW);
+    let descLh = 12;
+    h += descLines * descLh;
+    // If it exceeds a cap, shrink font estimate
+    if (h > 500) { descLh = 10; h = h - descLines*12 + descLines*10; }
+    texH = Math.min(Math.max(h + 10, 160), 500);
+  }
+
+  const tex = makeCanvasTex((ctx, W, H) => {
+    // ── Background ──
     ctx.fillStyle = isSel ? 'rgba(0,0,0,0.65)' : 'rgba(0,0,0,0.4)';
     ctx.beginPath(); ctx.roundRect(0,0,W,H,5); ctx.fill();
-    // Left accent bar
     ctx.fillStyle = layer.color;
     ctx.fillRect(0,0,4,H);
-    // Selection border
     if (isSel) { ctx.strokeStyle = layer.color; ctx.lineWidth = 2; ctx.beginPath(); ctx.roundRect(1,1,W-2,H-2,5); ctx.stroke(); }
-    // Type badge
+    // ── Type badge ──
     ctx.font = 'bold 9px monospace'; ctx.textAlign = 'right';
     ctx.fillStyle = layer.color+'40';
     const bw = ctx.measureText(layer.type.toUpperCase()).width+14;
     ctx.beginPath(); ctx.roundRect(W-bw-6,6,bw,14,3); ctx.fill();
     ctx.fillStyle = layer.color;
     ctx.fillText(layer.type.toUpperCase(), W-10, 16);
-    // Name
+    // ── Name ──
     ctx.textAlign = 'left';
     ctx.font = 'bold 14px sans-serif';
     ctx.fillStyle = layer.color;
-    ctx.fillText(layer.name, 14, 18);
+    ctx.fillText(layer.name, pad, 18);
 
-    // Summary line — plain-language description
-    let yOff = 0;
+    let cur = 28;
+
+    // ══ PSEUDOCODE AT TOP (selected only) ══
+    if (hasPseudo) {
+      ctx.font = 'bold 8px monospace';
+      ctx.fillStyle = layer.color + '80';
+      ctx.fillText('PSEUDOCODE · FIPS 203 ' + (layer.algRef || ''), pad, cur);
+      cur += 12;
+      ctx.font = '10px monospace';
+      const maxPcLines = 6;
+      const pcSlice = layer.pseudo.slice(0, maxPcLines);
+      pcSlice.forEach(p => {
+        const lnStr = (p.ln !== '' && p.ln !== undefined) ? String(p.ln).padStart(2,' ') : '  ';
+        ctx.fillStyle = '#334155';
+        ctx.fillText(lnStr, pad, cur);
+        if (p.hl) {
+          const tw = ctx.measureText(p.code).width;
+          ctx.fillStyle = layer.color + '12';
+          ctx.fillRect(36, cur - 9, tw + 6, 13);
+          ctx.fillStyle = '#e2e8f0';
+          ctx.fillText(p.code, 38, cur);
+        } else {
+          ctx.fillStyle = '#94a3b8';
+          ctx.fillText(p.code, 38, cur);
+        }
+        if (p.cm) {
+          const cw = ctx.measureText(p.code).width;
+          ctx.fillStyle = '#334155'; ctx.font = 'italic 9px monospace';
+          ctx.fillText(p.cm, 42 + cw, cur);
+          ctx.font = '10px monospace';
+        }
+        cur += 13;
+      });
+      if (layer.pseudo.length > maxPcLines) {
+        ctx.fillStyle = '#334155'; ctx.font = 'italic 9px monospace';
+        ctx.fillText('… +' + (layer.pseudo.length - maxPcLines) + ' more', 38, cur);
+        cur += 10;
+      }
+      cur += 3;
+      ctx.strokeStyle = layer.color + '30'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(pad, cur); ctx.lineTo(W-pad, cur); ctx.stroke();
+      cur += 7;
+    }
+
+    // ══ SUMMARY ══
     if (hasSummary) {
       ctx.font = 'italic 10px sans-serif';
       ctx.fillStyle = isSel ? '#b0bec5' : '#6b7a8d';
-      wrapTextCanvas(ctx, '▸ ' + layer.summary, 14, 32, W-28, 12, 3);
-      yOff = 26; // shift everything below down
+      cur = wrapTextCanvas(ctx, '▸ ' + layer.summary, pad, cur, mW, 12, 3);
+      cur += 2;
     }
 
-    // Math formula
-    ctx.font = '13px monospace';
+    // ══ MATH FORMULA ══
+    ctx.font = '12px monospace';
     ctx.fillStyle = isSel ? '#ffffff' : '#cbd5e1';
-    wrapTextCanvas(ctx, layer.math, 14, 40 + yOff, W-28, 15, 3);
-    // Description (selected only, compact)
-    if (isSel) { ctx.font = '10px sans-serif'; ctx.fillStyle = '#8899aa'; wrapTextCanvas(ctx, layer.desc, 14, 72 + yOff, W-28, 12, 4); }
+    cur = wrapTextCanvas(ctx, layer.math, pad, cur, mW, 14, 2);
+    cur += 4;
 
-    // Pseudocode block on selected card
-    if (hasPseudo) {
-      const pcY0 = 126 + yOff;
-      // Separator line
-      ctx.strokeStyle = layer.color + '30';
-      ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(14, pcY0); ctx.lineTo(W-14, pcY0); ctx.stroke();
-      // Label
-      ctx.font = 'bold 8px monospace';
-      ctx.fillStyle = layer.color + '80';
-      ctx.fillText('PSEUDOCODE · FIPS 203 ' + (layer.algRef || ''), 14, pcY0 + 10);
-      // Code lines
-      ctx.font = '10px monospace';
-      let ly = pcY0 + 24;
-      const maxPcLines = 8;
-      const pcLines = layer.pseudo.slice(0, maxPcLines);
-      pcLines.forEach(p => {
-        const lnStr = (p.ln !== '' && p.ln !== undefined) ? String(p.ln).padStart(2,' ') : '  ';
-        // Line number
-        ctx.fillStyle = '#334155';
-        ctx.fillText(lnStr, 14, ly);
-        // Code text
-        if (p.hl) {
-          // Highlighted line: brighter with subtle bg
-          const codeText = p.code;
-          const textW = ctx.measureText(codeText).width;
-          ctx.fillStyle = layer.color + '12';
-          ctx.fillRect(36, ly - 9, textW + 6, 13);
-          ctx.fillStyle = '#e2e8f0';
-          ctx.fillText(codeText, 38, ly);
-        } else {
-          ctx.fillStyle = '#94a3b8';
-          ctx.fillText(p.code, 38, ly);
-        }
-        // Comment
-        if (p.cm) {
-          const codeW = ctx.measureText(p.code).width;
-          ctx.fillStyle = '#334155';
-          ctx.font = 'italic 9px monospace';
-          ctx.fillText(p.cm, 42 + codeW, ly);
-          ctx.font = '10px monospace';
-        }
-        ly += 14;
-      });
-      if (layer.pseudo.length > maxPcLines) {
-        ctx.fillStyle = '#334155';
-        ctx.font = 'italic 9px monospace';
-        ctx.fillText('... +' + (layer.pseudo.length - maxPcLines) + ' more lines', 38, ly);
-      }
+    // ══ DESCRIPTION — auto-scaled to fill remaining canvas ══
+    if (isSel) {
+      const avail = H - cur - 6;
+      if (avail > 12) fitTextCanvas(ctx, layer.desc, pad, cur, mW, avail, '#8899aa', 10);
     }
-  }, 640, texH);
+  }, CW, texH);
+  return { tex, texH };
 }
 
 function flowLabel3D(text, color) {
@@ -863,15 +920,17 @@ function build3D() {
 
     const hasPseudo = isSel && layer.pseudo && layer.pseudo.length > 0;
     const hasSummary = !!layer.summary;
-    const slabD = hasPseudo ? SLAB_D * 2.4 : (hasSummary ? SLAB_D * 1.5 : SLAB_D);
+
+    const { tex, texH } = layerTex(layer, isSel);
+    // Scale slab depth proportional to canvas height
+    const slabD = isSel ? SLAB_D * (texH / 140) : (hasSummary ? SLAB_D * 1.2 : SLAB_D);
 
     const geo = new THREE.BoxGeometry(SLAB_W, isSel?SLAB_H*2.2:SLAB_H, slabD);
     const mat = new THREE.MeshPhongMaterial({ color: c.clone().multiplyScalar(isSel?0.4:0.18), transparent:true, opacity:isSel?0.88:0.5, specular:c.clone().multiplyScalar(0.3), shininess:50 });
     g.add(new THREE.Mesh(geo, mat));
     g.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color:c, transparent:true, opacity:isSel?0.8:0.25 })));
 
-    const tex = layerTex(layer, isSel);
-    const panelD = hasPseudo ? slabD * 0.92 : slabD * 0.88;
+    const panelD = slabD * 0.92;
     const panel = new THREE.Mesh(new THREE.PlaneGeometry(SLAB_W*0.94, panelD), new THREE.MeshBasicMaterial({ map:tex, transparent:true, opacity:isSel?1:0.85, side:THREE.DoubleSide, depthWrite:false }));
     panel.position.y = (isSel?SLAB_H*1.1:SLAB_H/2)+0.004;
     panel.rotation.x = -Math.PI/2;
