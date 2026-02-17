@@ -1,0 +1,1128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ML-KEM (FIPS 203) — Cryptographic Operation Layer Stack</title>
+<meta name="description" content="Interactive 3D visualization of ML-KEM post-quantum key encapsulation mechanism mathematical operations with FIPS 203 pseudocode">
+<style>
+  :root {
+    --bg: #080c14;
+    --bg2: #0a0e17;
+    --panel: #111827;
+    --border: #1e293b;
+    --text: #e2e8f0;
+    --textdim: #94a3b8;
+    --textmuted: #64748b;
+    --textdark: #334155;
+    --cyan: #22d3ee;
+    --cyandim: #0e7490;
+    --green: #34d399;
+    --orange: #f59e0b;
+    --red: #f87171;
+    --purple: #a78bfa;
+    --pink: #e879f9;
+    --blue: #38bdf8;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', 'Helvetica Neue', system-ui, sans-serif; overflow: hidden; height: 100vh; }
+  #app { display: flex; flex-direction: column; height: 100vh; }
+
+  /* Header */
+  #header { display: flex; align-items: center; justify-content: space-between; padding: 10px 20px; border-bottom: 1px solid var(--border); background: var(--bg2); flex-shrink: 0; z-index: 10; }
+  #header .title-area .sup { font-size: 9px; font-family: 'Courier New', monospace; color: var(--cyandim); letter-spacing: 2.5px; text-transform: uppercase; }
+  #header .title-area h1 { font-size: 16px; font-weight: 700; margin: 2px 0 0; }
+  #header .title-area h1 .idx { font-family: 'Courier New', monospace; }
+  #header .title-area h1 .sep { color: var(--textdark); margin: 0 10px; }
+  #header .title-area h1 .count { color: var(--textmuted); font-weight: 400; }
+  #header .controls { display: flex; align-items: center; gap: 10px; }
+  .phase-tabs { display: flex; gap: 2px; background: var(--panel); border-radius: 6px; padding: 3px; }
+  .phase-tab { padding: 6px 14px; background: transparent; border: 1px solid transparent; border-radius: 4px; cursor: pointer; font-family: 'Courier New', monospace; font-size: 11px; font-weight: 700; color: var(--textmuted); transition: all 0.2s; }
+  .phase-tab.active { background: var(--border); }
+  .phase-tab .num { opacity: 0.4; margin-right: 4px; }
+  .nav-btns { display: flex; gap: 3px; }
+  .nav-btn { width: 28px; height: 28px; background: var(--border); border: 1px solid var(--textdark); border-radius: 4px; color: var(--textdim); cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center; transition: background 0.15s; }
+  .nav-btn:hover { background: var(--textdark); }
+  .pc-toggle { padding: 5px 10px; background: var(--border); border: 1px solid var(--textdark); border-radius: 4px; cursor: pointer; font-family: 'Courier New', monospace; font-size: 10px; font-weight: 700; color: var(--textmuted); transition: all 0.2s; }
+  .pc-toggle.active { color: var(--cyan); border-color: var(--cyandim); background: #0e749020; }
+
+  /* Main layout */
+  #main { display: flex; flex: 1; min-height: 0; }
+  #viewport { flex: 1; position: relative; cursor: grab; }
+  #viewport:active { cursor: grabbing; }
+  #viewport canvas { display: block; }
+  #viewport .hint { position: absolute; bottom: 10px; left: 14px; font-size: 9px; color: var(--textdark); font-family: 'Courier New', monospace; pointer-events: none; }
+
+  /* Sidebar */
+  #sidebar { width: 380px; border-left: 1px solid var(--border); background: var(--bg2); display: flex; flex-direction: column; flex-shrink: 0; }
+  #sidebar .section-label { padding: 8px 14px; border-bottom: 1px solid var(--border); font-size: 10px; font-family: 'Courier New', monospace; color: var(--textmuted); letter-spacing: 1px; display: flex; align-items: center; justify-content: space-between; }
+  #sidebar .section-label .sub { font-size: 8px; color: var(--textdark); }
+
+  /* SVG flowchart area */
+  #flowchart-wrap { flex: 1; overflow-y: auto; padding: 4px 0; }
+  #flowchart-wrap svg text { pointer-events: none; }
+  #flowchart-wrap .fc-node { cursor: pointer; }
+  #flowchart-wrap .fc-node:hover rect { stroke-opacity: 0.8 !important; }
+
+  /* Detail panel */
+  #detail { border-top: 1px solid var(--border); padding: 12px; flex-shrink: 0; max-height: 340px; overflow-y: auto; transition: background 0.3s; }
+  #detail .det-header { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+  #detail .det-dot { width: 10px; height: 10px; border-radius: 2px; }
+  #detail .det-name { font-size: 12px; font-weight: 700; }
+  #detail .det-type { font-size: 9px; font-family: 'Courier New', monospace; color: var(--textmuted); margin-left: auto; background: var(--border); padding: 2px 6px; border-radius: 3px; }
+  #detail .det-alg { font-size: 8px; font-family: 'Courier New', monospace; color: var(--cyan); margin-left: 4px; opacity: 0.7; }
+  #detail .det-math { font-size: 11px; font-family: 'Courier New', monospace; color: var(--text); padding: 5px 8px; background: #0d1117; border-radius: 4px; margin-bottom: 6px; line-height: 1.7; word-break: break-word; }
+  #detail .det-desc { font-size: 10px; color: var(--textdim); line-height: 1.6; }
+  #detail .flow-links { margin-top: 8px; padding-top: 6px; }
+  #detail .flow-links .fl-label { font-size: 9px; font-family: 'Courier New', monospace; color: var(--textmuted); }
+  #detail .flow-links .fl-badge { font-size: 9px; font-family: 'Courier New', monospace; padding: 1px 5px; border-radius: 3px; margin-right: 3px; cursor: pointer; display: inline-block; margin-bottom: 2px; }
+  #detail .loop-box { margin-top: 8px; padding: 6px 8px; border-radius: 4px; }
+  #detail .loop-box .loop-title { font-size: 9px; font-weight: 700; font-family: 'Courier New', monospace; margin-bottom: 3px; }
+  #detail .loop-box .loop-desc { font-size: 9px; color: var(--textdim); line-height: 1.5; }
+
+  /* Pseudocode panel */
+  #pseudocode { border-top: 1px solid var(--border); padding: 0; flex-shrink: 0; max-height: 0; overflow: hidden; transition: max-height 0.3s ease; }
+  #pseudocode.open { max-height: 260px; }
+  #pseudocode .pc-inner { padding: 8px 12px; overflow-y: auto; max-height: 250px; }
+  #pseudocode .pc-title { font-size: 9px; font-family: 'Courier New', monospace; color: var(--cyan); letter-spacing: 1px; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+  #pseudocode .pc-title .pc-ref { color: var(--textmuted); font-weight: 400; }
+  #pseudocode .pc-code { font-size: 10px; font-family: 'Courier New', monospace; line-height: 1.75; color: var(--textdim); white-space: pre-wrap; }
+  #pseudocode .pc-code .pc-ln { color: var(--textdark); display: inline-block; width: 22px; text-align: right; margin-right: 10px; user-select: none; }
+  #pseudocode .pc-code .pc-hl { color: var(--text); background: #ffffff08; display: inline; border-radius: 2px; padding: 0 2px; }
+  #pseudocode .pc-code .pc-kw { color: var(--purple); }
+  #pseudocode .pc-code .pc-fn { color: var(--cyan); }
+  #pseudocode .pc-code .pc-cm { color: var(--textdark); font-style: italic; }
+  #pseudocode .pc-code .pc-var { color: var(--green); }
+  #pseudocode .pc-code .pc-op { color: var(--orange); }
+
+  /* Responsive */
+  @media (max-width: 900px) {
+    #sidebar { width: 300px; }
+  }
+  @media (max-width: 700px) {
+    #main { flex-direction: column; }
+    #sidebar { width: 100%; height: 40%; border-left: none; border-top: 1px solid var(--border); }
+    #viewport { height: 60%; }
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 5px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="header">
+    <div class="title-area">
+      <div class="sup">FIPS 203 · ML-KEM Post-Quantum Key Encapsulation</div>
+      <h1>
+        Layer <span class="idx" id="hdr-idx">01</span><span class="count" id="hdr-count"> / 8</span>
+        <span class="sep">·</span>
+        <span id="hdr-name" style="color:var(--cyan)">Seed Generation</span>
+      </h1>
+    </div>
+    <div class="controls">
+      <button class="pc-toggle" id="pc-toggle" title="Toggle pseudocode panel (p)">{ } PSEUDOCODE</button>
+      <div class="phase-tabs" id="phase-tabs"></div>
+      <div class="nav-btns">
+        <button class="nav-btn" id="btn-up" title="Previous layer (↑ or k)">↑</button>
+        <button class="nav-btn" id="btn-down" title="Next layer (↓ or j)">↓</button>
+      </div>
+    </div>
+  </div>
+  <div id="main">
+    <div id="viewport">
+      <div class="hint">↑↓ j/k navigate · drag orbit · 1/2/3 switch phase · p toggle pseudocode</div>
+    </div>
+    <div id="sidebar">
+      <div class="section-label">
+        <span>FLOWCHART · <span id="fc-count">8</span> OPS</span>
+        <span class="sub">click node to navigate</span>
+      </div>
+      <div id="flowchart-wrap"></div>
+      <div id="pseudocode"><div class="pc-inner" id="pc-inner"></div></div>
+      <div id="detail"></div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// ═══════════════════════════════════════════════════════════════
+//  ML-KEM DATA — verified against FIPS 203 Algorithms 13-21
+// ═══════════════════════════════════════════════════════════════
+const PHASES = [
+  {
+    id:"keygen", label:"KEYGEN", color:"#22d3ee",
+    alg:"Alg 13: K-PKE.KeyGen(d) + Alg 16: ML-KEM.KeyGen_internal(d,z)",
+    flows:[
+      {from:0,to:1,label:"ρ seed",type:"data"},
+      {from:0,to:2,label:"σ seed",type:"data"},
+      {from:0,to:3,label:"σ seed",type:"data"},
+      {from:2,to:4,label:"s coeffs",type:"data"},
+      {from:3,to:4,label:"e coeffs",type:"data"},
+      {from:1,to:5,label:"Â matrix",type:"data"},
+      {from:4,to:5,label:"ŝ (NTT)",type:"seq"},
+      {from:4,to:6,label:"ê (NTT)",type:"seq"},
+      {from:5,to:6,label:"Â∘ŝ product",type:"seq"},
+      {from:6,to:7,label:"t̂ = Â∘ŝ+ê",type:"seq"},
+    ],
+    loops:[],
+    layers:[
+      {name:"Seed Expansion",
+       math:"(ρ, σ) ← G(d ‖ k)",
+       desc:"G = SHA3-512 expands 32-byte seed d concatenated with parameter k (security level byte) into public seed ρ (32 B, generates Â) and secret seed σ (32 B, generates s, e). FIPS 203 Alg 13, line 1.",
+       color:"#94a3b8",type:"input",
+       algRef:"Alg 13 line 1",
+       pseudo:[
+         {ln:1, code:'Input: d ∈ 𝔹³² (seed)', hl:false},
+         {ln:2, code:'(ρ, σ) ← G(d ‖ k)', hl:true, cm:'// SHA3-512, k = security param byte'},
+         {ln:3, code:'N ← 0', hl:false, cm:'// counter for PRF calls'},
+       ]},
+      {name:"Matrix Expansion",
+       math:"Â[i][j] ← SampleNTT(XOF(ρ ‖ j ‖ i))",
+       desc:"SHAKE-128 (XOF) expands ρ into k² polynomials directly in NTT domain. Each polynomial has 256 coefficients in ℤ₃₃₂₉. Rejection sampling ensures uniform distribution. Deterministic from ρ alone. Note index order: j then i per FIPS 203.",
+       color:"#22d3ee",type:"expand",
+       algRef:"Alg 13 lines 4-6",
+       pseudo:[
+         {ln:4, code:'for (i ← 0; i < k; i++)', hl:false},
+         {ln:5, code:'  for (j ← 0; j < k; j++)', hl:false},
+         {ln:6, code:'    Â[i][j] ← SampleNTT(XOF(ρ, j, i))', hl:true, cm:'// SHAKE-128 → rejection sample'},
+       ]},
+      {name:"Secret Sampling",
+       math:"s[i] ← SamplePolyCBD_η₁(PRF(σ, N++))  for i in [0,k)",
+       desc:"Centered Binomial Distribution (CBD): sample 2η₁ random bytes per coefficient via PRF = SHAKE-256(σ ‖ N), split into halves, subtract sums. Coefficients in [−η₁, η₁]. Vector s is the secret trapdoor. η₁=2 for ML-KEM-768/1024, η₁=3 for ML-KEM-512.",
+       color:"#34d399",type:"sample",
+       algRef:"Alg 13 lines 7-8",
+       pseudo:[
+         {ln:7, code:'for (i ← 0; i < k; i++)', hl:false},
+         {ln:8, code:'  s[i] ← SamplePolyCBD_η₁(PRF(σ, N)); N++', hl:true, cm:'// PRF = SHAKE-256'},
+       ]},
+      {name:"Error Sampling",
+       math:"e[i] ← SamplePolyCBD_η₁(PRF(σ, N++))  for i in [0,k)",
+       desc:"Same CBD process with the incremented counter N. Error vector e masks the exact relation t = A·s, making (A, t) computationally indistinguishable from uniform random under the M-LWE assumption.",
+       color:"#f59e0b",type:"sample",
+       algRef:"Alg 13 lines 9-10",
+       pseudo:[
+         {ln:9, code:'for (i ← 0; i < k; i++)', hl:false},
+         {ln:10, code:'  e[i] ← SamplePolyCBD_η₁(PRF(σ, N)); N++', hl:true},
+       ]},
+      {name:"NTT (Number Theoretic Transform) Forward",
+       math:"ŝ[i] = NTT(s[i]),  ê[i] = NTT(e[i])  ∀i",
+       desc:"Number Theoretic Transform converts each polynomial to evaluation form at powers of ζ=17 (primitive 256th root of unity mod 3329). Enables O(n log n) polynomial multiplication. q=3329 chosen so 256 | (q−1), ensuring NTT-friendly structure.",
+       color:"#a78bfa",type:"transform",
+       algRef:"Alg 13 lines 11-12",
+       pseudo:[
+         {ln:11, code:'for (i ← 0; i < k; i++)', hl:false},
+         {ln:12, code:'  ŝ[i] ← NTT(s[i])', hl:true},
+         {ln:13, code:'for (i ← 0; i < k; i++)', hl:false},
+         {ln:14, code:'  ê[i] ← NTT(e[i])', hl:true},
+       ]},
+      {name:"Matrix–Vector Multiply",
+       math:"t̂[i] = Σⱼ (Â[i][j] ∘ ŝ[j])   (pointwise in NTT domain)",
+       desc:"k pointwise polynomial multiplications per row, each ∘ = MultiplyNTTs (Alg 11): 128 base-case multiplies of degree-1 polynomials mod (X²−ζ^(2·BitRev7(i)+1)). Total: k²·128 base-case multiplies. Result accumulated in NTT domain.",
+       color:"#f87171",type:"compute",
+       algRef:"Alg 13 line 15 (partial)",
+       pseudo:[
+         {ln:15, code:'for (i ← 0; i < k; i++)', hl:false},
+         {ln:'', code:'  t̂[i] ← 0', hl:false},
+         {ln:'', code:'  for (j ← 0; j < k; j++)', hl:false},
+         {ln:'', code:'    t̂[i] ← t̂[i] + Â[i][j] ∘ ŝ[j]', hl:true, cm:'// ∘ = MultiplyNTTs (Alg 11)'},
+       ]},
+      {name:"Error Addition",
+       math:"t̂ = t̂ + ê",
+       desc:"Pointwise addition in NTT domain completes the Module-LWE instance: t = A·s + e (in coefficient domain). This is the core one-way function — recovering s from (A, t) requires solving M-LWE, believed hard even for quantum adversaries.",
+       color:"#fb923c",type:"compute",
+       algRef:"Alg 13 line 15",
+       pseudo:[
+         {ln:15, code:'t̂ ← Â ∘ ŝ + ê', hl:true, cm:'// complete M-LWE instance'},
+       ]},
+      {name:"Key Encoding & Output",
+       math:"ek = ByteEncode₁₂(t̂) ‖ ρ    dk = ByteEncode₁₂(ŝ) ‖ ek ‖ H(ek) ‖ z",
+       desc:"Encapsulation key (pk): encoded t̂ + seed ρ (enables Â regeneration). Decapsulation key (sk) bundles: encoded ŝ, the full ek (for FO re-encryption), H(ek) = SHA3-256(ek), and implicit-rejection seed z ∈ 𝔹³² from the RBG. FIPS 203 Alg 16 lines 4-7.",
+       color:"#22d3ee",type:"output",
+       algRef:"Alg 13 lines 16-20, Alg 16 lines 1-7",
+       pseudo:[
+         {ln:16, code:'ekPKE ← ByteEncode₁₂(t̂) ‖ ρ', hl:true, cm:'// Alg 13'},
+         {ln:17, code:'dkPKE ← ByteEncode₁₂(ŝ)', hl:false},
+         {ln:'', code:'— ML-KEM wrapper (Alg 16) —', hl:false},
+         {ln:4, code:'ek ← ekPKE', hl:false},
+         {ln:5, code:'dk ← dkPKE ‖ ek ‖ H(ek) ‖ z', hl:true, cm:'// H = SHA3-256'},
+         {ln:6, code:'return (ek, dk)', hl:false},
+       ]},
+    ],
+  },
+  {
+    id:"encaps", label:"ENCAPSULATE", color:"#f59e0b",
+    alg:"Alg 14: K-PKE.Encrypt(ek,m,r) + Alg 17: ML-KEM.Encaps_internal(ek,m)",
+    flows:[
+      {from:0,to:1,label:"m + H(ek)",type:"data"},
+      {from:1,to:2,label:"r coin",type:"data"},
+      {from:1,to:3,label:"r̂ via PRF",type:"data"},
+      {from:1,to:5,label:"e₂ via PRF",type:"data"},
+      {from:2,to:3,label:"ŷ (NTT)",type:"seq"},
+      {from:2,to:5,label:"ŷ (NTT)",type:"seq"},
+      {from:3,to:4,label:"Aᵀŷ + e₁",type:"seq"},
+      {from:0,to:5,label:"m bits",type:"data"},
+      {from:5,to:6,label:"v raw",type:"seq"},
+      {from:4,to:7,label:"ū compressed",type:"seq"},
+      {from:6,to:7,label:"v̄ compressed",type:"seq"},
+    ],
+    loops:[],
+    layers:[
+      {name:"Message Generation",
+       math:"m ←$ 𝔹³²",
+       desc:"Uniformly random 256-bit value (32 bytes) from an approved RBG. This is NOT plaintext — it is an ephemeral seed from which noise vectors and the shared secret K are both deterministically derived via the FO transform. FIPS 203 Alg 17 uses m passed from Alg 20.",
+       color:"#94a3b8",type:"input",
+       algRef:"Alg 20 line 1, Alg 17 input",
+       pseudo:[
+         {ln:1, code:'Input: ek (encapsulation key), m ∈ 𝔹³²', hl:false},
+         {ln:2, code:'(K̄, r) ← G(m ‖ H(ek))', hl:true, cm:'// G = SHA3-512, H = SHA3-256'},
+       ]},
+      {name:"Noise Derivation",
+       math:"(K̄, r) ← G(m ‖ H(ek))  then  y,e₁,e₂ ← PRF(r, N++)",
+       desc:"SHA3-512 first derives (K̄, r) from m and the public key hash. K̄ becomes the shared secret; r is the deterministic randomness coin. Then SHAKE-256 as PRF with incrementing counter N expands r into noise vectors y (ephemeral secret), e₁, e₂. This determinism enables the FO re-encryption check in decapsulation.",
+       color:"#f59e0b",type:"expand",
+       algRef:"Alg 17 line 1 → Alg 14 lines 9-19",
+       pseudo:[
+         {ln:1, code:'(K̄, r) ← G(m ‖ H(ek))', hl:true, cm:'// Alg 17: K̄ = future shared secret'},
+         {ln:'', code:'— inside K-PKE.Encrypt(ek, m, r): —', hl:false},
+         {ln:9, code:'N ← 0', hl:false},
+         {ln:10, code:'for (i ← 0; i < k; i++)', hl:false},
+         {ln:11, code:'  y[i] ← SamplePolyCBD_η₁(PRF(r, N)); N++', hl:true, cm:'// ephemeral vector'},
+         {ln:12, code:'for (i ← 0; i < k; i++)', hl:false},
+         {ln:13, code:'  e₁[i] ← SamplePolyCBD_η₂(PRF(r, N)); N++', hl:true},
+         {ln:14, code:'e₂ ← SamplePolyCBD_η₂(PRF(r, N))', hl:true, cm:'// scalar polynomial'},
+       ]},
+      {name:"NTT (Number Theoretic Transform) of Ephemeral",
+       math:"ŷ[i] = NTT(y[i])   ∀i",
+       desc:"Forward NTT on the ephemeral vector y (small CBD-sampled coefficients) for efficient matrix multiply in NTT domain. Used once in this encapsulation then discarded with all other ephemeral state.",
+       color:"#a78bfa",type:"transform",
+       algRef:"Alg 14 line 20",
+       pseudo:[
+         {ln:20, code:'for (i ← 0; i < k; i++)', hl:false},
+         {ln:'', code:'  ŷ[i] ← NTT(y[i])', hl:true},
+       ]},
+      {name:"Compute u",
+       math:"u = NTT⁻¹(Âᵀ ∘ ŷ) + e₁",
+       desc:"Transpose matrix-vector multiply in NTT domain, then inverse NTT to coefficient domain, then add error e₁. This is u = Aᵀ·y + e₁, the sender's half of the shared lattice computation. Â is regenerated from ρ in ek.",
+       color:"#f87171",type:"compute",
+       algRef:"Alg 14 line 21",
+       pseudo:[
+         {ln:21, code:'u ← NTT⁻¹(Âᵀ ∘ ŷ) + e₁', hl:true, cm:'// Â rebuilt from ρ in ek'},
+       ]},
+      {name:"Compress u",
+       math:"c₁ = ByteEncode_du(Compress_du(u))",
+       desc:"Lossy rounding: each coefficient mapped from [0,q) → [0,2^du) via ⌈(2^du/q)·x⌋. du=10 for ML-KEM-768. Introduces permanent bounded rounding error |ε| ≤ q/(2·2^du). Saves bandwidth (~500 B for ML-KEM-768). Compression cannot be done in NTT domain.",
+       color:"#38bdf8",type:"compress",
+       algRef:"Alg 14 line 23",
+       pseudo:[
+         {ln:23, code:'c₁ ← ByteEncode_du(Compress_du(u))', hl:true, cm:'// lossy: 12-bit → du-bit'},
+       ]},
+      {name:"Compute v",
+       math:"v = NTT⁻¹(t̂ᵀ ∘ ŷ) + e₂ + Decompress₁(m)",
+       desc:"Inner product of public key t̂ with ephemeral ŷ in NTT domain, inverse NTT, add error e₂, then encode message. Decompress₁ maps each bit: 0→0, 1→⌈q/2⌋=1665. This places each message bit at maximum distance from decision boundary in ℤ_q, maximizing noise tolerance.",
+       color:"#f87171",type:"compute",
+       algRef:"Alg 14 line 22",
+       pseudo:[
+         {ln:22, code:'µ ← Decompress₁(ByteDecode₁(m))', hl:false, cm:'// 0→0, 1→1665'},
+         {ln:'', code:'v ← NTT⁻¹(t̂ᵀ ∘ ŷ) + e₂ + µ', hl:true},
+       ]},
+      {name:"Compress v",
+       math:"c₂ = ByteEncode_dv(Compress_dv(v))",
+       desc:"Aggressive compression: dv=4 for ML-KEM-768 (12-bit coefficients → 4-bit). Combined noise budget from LWE error + Compress(u) rounding + Compress(v) rounding must stay below q/4 ≈ 832 for correct decryption. This is always satisfied for valid ciphertexts.",
+       color:"#38bdf8",type:"compress",
+       algRef:"Alg 14 line 24",
+       pseudo:[
+         {ln:24, code:'c₂ ← ByteEncode_dv(Compress_dv(v))', hl:true, cm:'// aggressive: 12→dv bit'},
+       ]},
+      {name:"Output Ciphertext & Key",
+       math:"c = (c₁ ‖ c₂)    K = SHA3-256(K̄)",
+       desc:"Ciphertext: concatenation of compressed u and v. Shared secret K = SHA3-256(K̄) where K̄ is the first 32 bytes from G(m ‖ H(ek)). K is used as the symmetric key for subsequent AEAD encryption. Both c and K are returned. FIPS 203 Alg 17 lines 2-3.",
+       color:"#f59e0b",type:"output",
+       algRef:"Alg 14 line 25, Alg 17 lines 2-3",
+       pseudo:[
+         {ln:25, code:'c ← c₁ ‖ c₂', hl:false, cm:'// Alg 14: ciphertext'},
+         {ln:'', code:'— ML-KEM wrapper (Alg 17) —', hl:false},
+         {ln:2, code:'c ← K-PKE.Encrypt(ek, m, r)', hl:false},
+         {ln:3, code:'K ← SHA3-256(K̄)', hl:true, cm:'// shared secret from G output'},
+         {ln:4, code:'return (K, c)', hl:false},
+       ]},
+    ],
+  },
+  {
+    id:"decaps", label:"DECAPSULATE", color:"#34d399",
+    alg:"Alg 15: K-PKE.Decrypt(dk,c) + Alg 18: ML-KEM.Decaps_internal(dk,c)",
+    flows:[
+      {from:0,to:1,label:"c₁, c₂ raw",type:"seq"},
+      {from:1,to:2,label:"u' approx",type:"seq"},
+      {from:1,to:4,label:"v' approx",type:"data"},
+      {from:2,to:3,label:"û' NTT",type:"seq"},
+      {from:3,to:4,label:"ŝᵀ·û'",type:"seq"},
+      {from:4,to:5,label:"≈⌈q/2⌋m+ε",type:"seq"},
+      {from:5,to:6,label:"m' bits",type:"seq"},
+      {from:6,to:7,label:"pass/fail",type:"seq"},
+    ],
+    loops:[
+      {from:6,to:0,label:"FO: re-encrypt m'→c*, compare c*≟c",color:"#e879f9",desc:"Fujisaki-Okamoto implicit rejection: deterministically re-run K-PKE.Encrypt(ek, m', r'). All noise re-derived from m' via G(m' ‖ H(ek)) → (K̄', r') → PRF(r', N++). If c*≠c, ciphertext was malformed (chosen-ciphertext attack). Output pseudorandom K̄=J(z‖c) using SHAKE-256 instead. Attacker cannot distinguish real from rejection K̄. Converts CPA→CCA2 security."},
+    ],
+    layers:[
+      {name:"Receive Ciphertext",
+       math:"c = (c₁, c₂)",
+       desc:"Parse the ciphertext into its two compressed components. c₁ encodes the compressed u vector, c₂ encodes compressed v scalar polynomial. Both have reduced bit-width from the encapsulator's compression.",
+       color:"#94a3b8",type:"input",
+       algRef:"Alg 18 input, Alg 15 line 1",
+       pseudo:[
+         {ln:1, code:'Input: dk (decapsulation key), c (ciphertext)', hl:false},
+         {ln:'', code:'— Parse dk components —', hl:false},
+         {ln:2, code:'dkPKE ← dk[0:384k]', hl:false},
+         {ln:3, code:'ek ← dk[384k:768k+32]', hl:false},
+         {ln:4, code:'h ← dk[768k+32:768k+64]', hl:false, cm:'// H(ek) stored at keygen'},
+         {ln:5, code:'z ← dk[768k+64:768k+96]', hl:false, cm:'// rejection seed'},
+       ]},
+      {name:"Decompress",
+       math:"u' = Decompress_du(ByteDecode_du(c₁))    v' = Decompress_dv(ByteDecode_dv(c₂))",
+       desc:"Scale back from [0,2^d) to [0,q) via ⌈(q/2^d)·x⌋. Does NOT recover exact originals — the rounding error from compression is permanent (Lemma 1: |ε| ≤ q/(2p) + 1/2) and adds to the total noise budget.",
+       color:"#38bdf8",type:"compress",
+       algRef:"Alg 15 lines 2-5",
+       pseudo:[
+         {ln:2, code:'c₁ ← c[0:32·du·k]', hl:false},
+         {ln:3, code:'c₂ ← c[32·du·k:]', hl:false},
+         {ln:4, code:"u' ← Decompress_du(ByteDecode_du(c₁))", hl:true, cm:'// [0,2^du) → [0,q)'},
+         {ln:5, code:"v' ← Decompress_dv(ByteDecode_dv(c₂))", hl:true},
+       ]},
+      {name:"NTT (Number Theoretic Transform) of u'",
+       math:"û' = NTT(u')",
+       desc:"Forward NTT on decompressed u' for efficient multiplication with the stored secret key ŝ (already in NTT domain from keygen). This avoids expensive polynomial multiplication in coefficient domain.",
+       color:"#a78bfa",type:"transform",
+       algRef:"Alg 15 (implicit in line 6)",
+       pseudo:[
+         {ln:'', code:"for (i ← 0; i < k; i++)", hl:false},
+         {ln:'', code:"  û'[i] ← NTT(u'[i])", hl:true},
+       ]},
+      {name:"Secret · Ciphertext",
+       math:"w = NTT⁻¹(ŝᵀ ∘ û')",
+       desc:"Core decryption inner product: sᵀ·u' ≈ sᵀ·(Aᵀ·y + e₁) = sᵀ·Aᵀ·y + sᵀ·e₁ + rounding noise. The sᵀ·Aᵀ·y = (A·s)ᵀ·y = tᵀ·y term is what cancels against v in the next step.",
+       color:"#f87171",type:"compute",
+       algRef:"Alg 15 line 6",
+       pseudo:[
+         {ln:6, code:"ŝ ← ByteDecode₁₂(dkPKE)", hl:false, cm:'// recover NTT-domain secret'},
+         {ln:7, code:"w ← NTT⁻¹(ŝᵀ ∘ û')", hl:true, cm:'// inner product + INTT'},
+       ]},
+      {name:"Subtract & Isolate",
+       math:"m̃ = v' − w  ≈  ⌈q/2⌋·m + ε_total",
+       desc:"KEY CANCELLATION: v' ≈ tᵀy+e₂+⌈q/2⌋m and w ≈ sᵀAᵀy+sᵀe₁. Since t=As+e, we get tᵀy = (As+e)ᵀy = sᵀAᵀy + eᵀy. So: v'−w ≈ eᵀy + e₂ − sᵀe₁ + ⌈q/2⌋m + rounding. The residual ε_total = eᵀy + e₂ − sᵀe₁ + compression noise is small because all noise terms have small coefficients.",
+       color:"#f87171",type:"compute",
+       algRef:"Alg 15 line 7 (partial)",
+       pseudo:[
+         {ln:7, code:"m̃ ← v' − w", hl:true, cm:'// ≈ ⌈q/2⌋·m + small noise'},
+       ]},
+      {name:"Decode Message",
+       math:"m' = Compress₁(m̃):  m'[i] = ⌈(2/q)·m̃[i]⌋ mod 2",
+       desc:"Compress₁ rounds each of 256 coefficients to {0,1}. Values near 0 → 0, values near q/2=1665 → 1. The decision boundary is at q/4 ≈ 832. Since |ε_total| < q/4 always holds for valid ciphertexts, no bit flips occur. Decryption failure probability ≈ 2⁻¹⁶⁴ for ML-KEM-768.",
+       color:"#34d399",type:"decode",
+       algRef:"Alg 15 line 7",
+       pseudo:[
+         {ln:7, code:"m' ← ByteEncode₁(Compress₁(m̃))", hl:true, cm:'// round to {0,1} per coeff'},
+       ]},
+      {name:"FO Re-Encrypt & Compare",
+       math:"(K̄', r') ← G(m' ‖ h);  c' ← K-PKE.Encrypt(ek, m', r');  c' ≟ c",
+       desc:"FUJISAKI-OKAMOTO TRANSFORM: deterministically re-encrypt recovered m' using the stored ek. All noise vectors re-derived identically from r' via PRF. If m'=m, then r'=r and c'=c exactly. Constant-time comparison prevents timing side-channels.",
+       color:"#e879f9",type:"verify",
+       algRef:"Alg 18 lines 6-9",
+       pseudo:[
+         {ln:6, code:"(K̄', r') ← G(m' ‖ h)", hl:true, cm:'// re-derive noise coin'},
+         {ln:7, code:"K̄ ← SHA3-256(K̄')", hl:false, cm:'// candidate shared secret'},
+         {ln:8, code:"c' ← K-PKE.Encrypt(ek, m', r')", hl:true, cm:'// full re-encryption'},
+         {ln:9, code:'if c ≠ c\':', hl:false},
+         {ln:10, code:'  K̄ ← J(z ‖ c)', hl:true, cm:'// J = SHAKE-256: implicit rejection'},
+       ]},
+      {name:"Shared Secret Output",
+       math:"K = K̄  (either SHA3-256(K̄') if match, or J(z‖c) if reject)",
+       desc:"Match path: K=SHA3-256(K̄'), identical to encapsulator's K. Rejection path: K=J(z‖c) using SHAKE-256 with secret seed z and the full ciphertext. The adversary cannot distinguish which path was taken — this provides IND-CCA2 security. z is never revealed.",
+       color:"#34d399",type:"output",
+       algRef:"Alg 18 lines 10-11",
+       pseudo:[
+         {ln:10, code:'return K̄', hl:true, cm:'// 32-byte shared secret'},
+         {ln:'', code:'', hl:false},
+         {ln:'', code:'// Caller uses K̄ for AEAD keying', hl:false},
+         {ln:'', code:'// z‖c rejection is indistinguishable', hl:false},
+       ]},
+    ],
+  },
+];
+
+// ═══════════════════════════════════════════════════════════════
+//  LAYER SUMMARIES — plain-language one-liners for 3D cards
+// ═══════════════════════════════════════════════════════════════
+const SUMMARIES = {
+  keygen: [
+    "Hash a random seed into two sub-seeds: one public, one secret",
+    "Deterministically build a shared k×k matrix of polynomials from the public seed",
+    "Generate a secret vector of small random polynomials (the private key core)",
+    "Generate a noise vector of small random polynomials to hide the secret",
+    "Convert secret & noise from coefficient form → frequency form for fast multiply",
+    "Multiply the public matrix by the secret vector (k² polynomial multiplies)",
+    "Add noise to the product — this creates the hard-to-invert public key vector",
+    "Serialize and bundle public key (matrix seed + product) and private key (secret + metadata)",
+  ],
+  encaps: [
+    "Draw 32 random bytes — this ephemeral seed drives all encryption randomness",
+    "Hash seed + public key → shared secret material + deterministic noise coin",
+    "Convert ephemeral vector to frequency domain for matrix multiply",
+    "Multiply transposed public matrix by ephemeral vector + add noise → ciphertext part 1",
+    "Lossy-round ciphertext part 1: shrink coefficients from 12-bit to du-bit to save space",
+    "Dot-product public key with ephemeral + noise + scaled message bits → ciphertext part 2",
+    "Lossy-round ciphertext part 2: shrink from 12-bit to dv-bit (most aggressive compression)",
+    "Concatenate both ciphertext halves; derive the 32-byte shared secret via SHA3",
+  ],
+  decaps: [
+    "Receive the two-part compressed ciphertext from the sender",
+    "Reverse the lossy rounding: scale compressed values back up to mod-q (approximate)",
+    "Convert decompressed u vector to frequency domain to match stored secret key",
+    "Multiply secret key by ciphertext vector — approximates the sender's lattice point",
+    "Subtract to cancel the shared lattice term; isolate scaled message + small residual noise",
+    "Round each noisy coefficient to 0 or 1 — noise is small enough that no bits flip",
+    "Re-encrypt recovered message and compare ciphertexts; reject if they differ (FO transform)",
+    "Output shared secret: real key if match, pseudorandom decoy if tampered (IND-CCA2)",
+  ],
+};
+
+// Inject summaries into layer data
+PHASES.forEach(p => p.layers.forEach((l, i) => { l.summary = SUMMARIES[p.id][i]; }));
+
+// ═══════════════════════════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════════════════════════
+let currentPhase = "keygen";
+let selectedIdx = 0;
+let phaseData = PHASES[0];
+let showPseudo = true;
+
+function getPhase() { return PHASES.find(p => p.id === currentPhase); }
+function setPhase(id) {
+  currentPhase = id;
+  selectedIdx = 0;
+  phaseData = getPhase();
+  rebuild();
+}
+function setSelected(i) {
+  selectedIdx = Math.max(0, Math.min(i, phaseData.layers.length - 1));
+  rebuild();
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  HEADER + TABS
+// ═══════════════════════════════════════════════════════════════
+function renderHeader() {
+  const layer = phaseData.layers[selectedIdx];
+  document.getElementById('hdr-idx').textContent = String(selectedIdx+1).padStart(2,'0');
+  document.getElementById('hdr-idx').style.color = phaseData.color;
+  document.getElementById('hdr-count').textContent = ' / ' + phaseData.layers.length;
+  document.getElementById('hdr-name').textContent = layer.name;
+  document.getElementById('hdr-name').style.color = layer.color;
+  document.getElementById('fc-count').textContent = phaseData.layers.length;
+
+  // Tabs
+  const tabs = document.getElementById('phase-tabs');
+  tabs.innerHTML = '';
+  PHASES.forEach((p, pi) => {
+    const btn = document.createElement('button');
+    btn.className = 'phase-tab' + (p.id === currentPhase ? ' active' : '');
+    btn.style.color = p.id === currentPhase ? p.color : '';
+    btn.style.borderColor = p.id === currentPhase ? p.color + '30' : 'transparent';
+    btn.innerHTML = `<span class="num">${pi+1}</span>${p.label}`;
+    btn.onclick = () => setPhase(p.id);
+    tabs.appendChild(btn);
+  });
+
+  // Pseudocode toggle
+  const pcBtn = document.getElementById('pc-toggle');
+  pcBtn.className = 'pc-toggle' + (showPseudo ? ' active' : '');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SVG FLOWCHART SIDEBAR
+// ═══════════════════════════════════════════════════════════════
+function renderFlowchart() {
+  const wrap = document.getElementById('flowchart-wrap');
+  const layers = phaseData.layers;
+  const W = 360, padX = 12, nodeH = 34, gapY = 12, nodeX = padX + 14;
+  const nodeW = W - padX*2 - 28;
+  const totalH = layers.length * (nodeH + gapY) + 60;
+  const getY = i => 22 + i * (nodeH + gapY);
+  const getCY = i => getY(i) + nodeH / 2;
+
+  let svg = `<svg width="${W}" height="${totalH}" xmlns="http://www.w3.org/2000/svg">`;
+  svg += `<defs>`;
+  layers.forEach((l, i) => {
+    svg += `<linearGradient id="lg${i}" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stop-color="${l.color}" stop-opacity="${selectedIdx===i?'0.2':'0.12'}"/><stop offset="100%" stop-color="${l.color}" stop-opacity="0.03"/></linearGradient>`;
+  });
+  svg += `<marker id="am" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 1L7 4L0 7Z" fill="#8899aa"/></marker>`;
+  svg += `<marker id="amc" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 1L7 4L0 7Z" fill="#e879f9"/></marker>`;
+  svg += `</defs>`;
+
+  // Sequential flows
+  phaseData.flows.filter(f => f.type==="seq" && f.to===f.from+1).forEach(f => {
+    const y1 = getY(f.from) + nodeH + 1;
+    const y2 = getY(f.to) - 1;
+    const mx = nodeX + nodeW/2;
+    const fc = layers[f.from].color;
+    svg += `<line x1="${mx}" y1="${y1}" x2="${mx}" y2="${y2}" stroke="${fc}" stroke-width="1.8" stroke-opacity="0.55" marker-end="url(#am)"/>`;
+    svg += `<text x="${mx+10}" y="${(y1+y2)/2+3}" font-size="8" font-family="'Courier New',monospace" fill="${fc}" fill-opacity="0.7">${f.label}</text>`;
+  });
+
+  // Non-sequential / data flows
+  let dataFlowIdx = 0;
+  phaseData.flows.filter(f => !(f.type==="seq" && f.to===f.from+1)).forEach(f => {
+    const fromY = getCY(f.from);
+    const toY = getCY(f.to);
+    const isLeft = dataFlowIdx % 2 === 0;
+    const side = isLeft ? nodeX - 4 : nodeX + nodeW + 4;
+    const gap = f.to - f.from;
+    const bulge = isLeft ? nodeX - 20 - gap*4 : nodeX + nodeW + 20 + gap*4;
+    const fc = layers[f.from].color;
+    const midY = (fromY + toY) / 2;
+    svg += `<path d="M${side} ${fromY} C${bulge} ${fromY},${bulge} ${toY},${side} ${toY}" fill="none" stroke="${fc}" stroke-width="1.3" stroke-opacity="0.5" stroke-dasharray="4,2" marker-end="url(#am)"/>`;
+    svg += `<text x="${bulge+(isLeft?-3:3)}" y="${midY+3}" font-size="7" font-family="'Courier New',monospace" fill="${fc}" fill-opacity="0.75" text-anchor="${isLeft?'end':'start'}">${f.label}</text>`;
+    dataFlowIdx++;
+  });
+
+  // Loop-back arcs
+  phaseData.loops.forEach(loop => {
+    const fromY = getCY(loop.from);
+    const toY = getCY(loop.to);
+    const rx = nodeX + nodeW + 40;
+    svg += `<path d="M${nodeX+nodeW+4} ${fromY} C${rx+12} ${fromY},${rx+12} ${toY},${nodeX+nodeW+4} ${toY}" fill="none" stroke="${loop.color}" stroke-width="1.8" stroke-opacity="0.65" stroke-dasharray="5,3" marker-end="url(#amc)"/>`;
+    svg += `<text x="${rx+6}" y="${(fromY+toY)/2}" font-size="7" font-family="'Courier New',monospace" fill="${loop.color}" fill-opacity="0.85" text-anchor="start" writing-mode="tb">↺ FO loop</text>`;
+  });
+
+  // Nodes
+  layers.forEach((l, i) => {
+    const y = getY(i);
+    const isSel = i === selectedIdx;
+    svg += `<g class="fc-node" onclick="setSelected(${i})">`;
+    svg += `<rect x="${nodeX}" y="${y}" width="${nodeW}" height="${nodeH}" rx="4" fill="url(#lg${i})" stroke="${l.color}" stroke-width="${isSel?1.5:0.5}" stroke-opacity="${isSel?1:0.3}"/>`;
+    svg += `<rect x="${nodeX}" y="${y}" width="3" height="${nodeH}" rx="1" fill="${l.color}" opacity="${isSel?1:0.3}"/>`;
+    svg += `<text x="${nodeX+10}" y="${y+13}" font-size="8" font-family="'Courier New',monospace" fill="${l.color}" opacity="${isSel?1:0.5}">${String(i+1).padStart(2,'0')}</text>`;
+    svg += `<text x="${nodeX+26}" y="${y+13}" font-size="9.5" font-family="'Segoe UI',sans-serif" font-weight="${isSel?'bold':'normal'}" fill="${isSel?l.color:'#8896a6'}">${l.name}</text>`;
+    const mathTrunc = l.math.length > 40 ? l.math.slice(0,40)+'…' : l.math;
+    svg += `<text x="${nodeX+10}" y="${y+27}" font-size="8" font-family="'Courier New',monospace" fill="${isSel?'#cbd5e1':'#475569'}">${escHtml(mathTrunc)}</text>`;
+    svg += `</g>`;
+  });
+
+  svg += `</svg>`;
+  wrap.innerHTML = svg;
+
+  requestAnimationFrame(() => {
+    const node = wrap.querySelectorAll('.fc-node')[selectedIdx];
+    if (node) node.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  });
+}
+
+function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ═══════════════════════════════════════════════════════════════
+//  PSEUDOCODE PANEL
+// ═══════════════════════════════════════════════════════════════
+function renderPseudocode() {
+  const el = document.getElementById('pseudocode');
+  const inner = document.getElementById('pc-inner');
+  el.className = showPseudo ? 'open' : '';
+  if (!showPseudo) return;
+
+  const layer = phaseData.layers[selectedIdx];
+  if (!layer.pseudo || !layer.pseudo.length) {
+    inner.innerHTML = `<div class="pc-title">PSEUDOCODE <span class="pc-ref">${layer.algRef || ''}</span></div><div class="pc-code" style="color:var(--textdark)">No pseudocode for this layer</div>`;
+    return;
+  }
+
+  let html = `<div class="pc-title">PSEUDOCODE <span class="pc-ref">· FIPS 203 ${layer.algRef || ''}</span></div>`;
+  html += `<div class="pc-code">`;
+  layer.pseudo.forEach(p => {
+    const lnStr = p.ln !== '' && p.ln !== undefined ? String(p.ln).padStart(2,' ') : '  ';
+    const cmStr = p.cm ? ` <span class="pc-cm">${escHtml(p.cm)}</span>` : '';
+    if (p.hl) {
+      html += `<div><span class="pc-ln">${lnStr}</span><span class="pc-hl">${escHtml(p.code)}</span>${cmStr}</div>`;
+    } else {
+      html += `<div><span class="pc-ln">${lnStr}</span>${escHtml(p.code)}${cmStr}</div>`;
+    }
+  });
+  html += `</div>`;
+  inner.innerHTML = html;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  DETAIL PANEL
+// ═══════════════════════════════════════════════════════════════
+function renderDetail() {
+  const el = document.getElementById('detail');
+  const layer = phaseData.layers[selectedIdx];
+  el.style.background = layer.color + '08';
+
+  const incoming = (phaseData.flows||[]).filter(f => f.to === selectedIdx);
+  const outgoing = (phaseData.flows||[]).filter(f => f.from === selectedIdx);
+  const loop = (phaseData.loops||[]).find(l => l.from === selectedIdx);
+
+  let html = `<div class="det-header"><div class="det-dot" style="background:${layer.color}"></div><span class="det-name" style="color:${layer.color}">${layer.name}</span>`;
+  if (layer.algRef) html += `<span class="det-alg">${layer.algRef}</span>`;
+  html += `<span class="det-type">${layer.type}</span></div>`;
+  if (layer.summary) {
+    html += `<div style="font-size:10px;color:#8896a6;font-style:italic;margin-bottom:5px;line-height:1.5">▸ ${layer.summary}</div>`;
+  }
+  html += `<div class="det-math" style="border-color:${layer.color}20">${escHtml(layer.math)}</div>`;
+  html += `<div class="det-desc">${layer.desc}</div>`;
+
+  if (incoming.length || outgoing.length) {
+    html += `<div class="flow-links" style="border-top:1px solid ${layer.color}15">`;
+    if (incoming.length) {
+      html += `<div style="margin-bottom:4px"><span class="fl-label">← IN: </span>`;
+      incoming.forEach(f => {
+        const fc = phaseData.layers[f.from].color;
+        html += `<span class="fl-badge" onclick="setSelected(${f.from})" style="color:${fc};background:${fc}15;border:1px solid ${fc}30">${escHtml(f.label)} ← ${String(f.from+1).padStart(2,'0')}</span>`;
+      });
+      html += `</div>`;
+    }
+    if (outgoing.length) {
+      html += `<div><span class="fl-label">→ OUT: </span>`;
+      outgoing.forEach(f => {
+        const tc = phaseData.layers[f.to].color;
+        html += `<span class="fl-badge" onclick="setSelected(${f.to})" style="color:${tc};background:${tc}15;border:1px solid ${tc}30">${escHtml(f.label)} → ${String(f.to+1).padStart(2,'0')}</span>`;
+      });
+      html += `</div>`;
+    }
+    html += `</div>`;
+  }
+
+  if (loop) {
+    html += `<div class="loop-box" style="background:${loop.color}10;border:1px solid ${loop.color}25"><div class="loop-title" style="color:${loop.color}">↺ ITERATION LOOP</div><div class="loop-desc">${loop.desc}</div></div>`;
+  }
+
+  el.innerHTML = html;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  THREE.JS 3D SCENE
+// ═══════════════════════════════════════════════════════════════
+let scene, camera, renderer, clock;
+let camAngle = { theta: 0.55, phi: 0.2 };
+let camAngleTarget = { theta: 0.55, phi: 0.2 };
+let camTargetY = 0;
+let isDrag = false, dragStart = { x:0, y:0 };
+const SPACING = 1.6, SLAB_W = 5.8, SLAB_H = 0.09, SLAB_D = 3.0;
+
+function makeCanvasTex(drawFn, w, h) {
+  const S = 2, c = document.createElement('canvas');
+  c.width = w*S; c.height = h*S;
+  const ctx = c.getContext('2d');
+  ctx.scale(S, S);
+  drawFn(ctx, w, h);
+  const t = new THREE.CanvasTexture(c);
+  t.minFilter = THREE.LinearFilter;
+  t.magFilter = THREE.LinearFilter;
+  t.anisotropy = 4;
+  return t;
+}
+
+function wrapTextCanvas(ctx, text, x, y, maxW, lh, maxLines) {
+  const words = text.split(' ');
+  let line = '', ly = y, n = 0;
+  for (const w of words) {
+    const test = line + (line?' ':'')+w;
+    if (ctx.measureText(test).width > maxW && line) {
+      ctx.fillText(line, x, ly);
+      line = w; ly += lh; n++;
+      if (maxLines && n >= maxLines) { ctx.fillText(line+'…', x, ly); return; }
+    } else line = test;
+  }
+  if (line) ctx.fillText(line, x, ly);
+}
+
+function layerTex(layer, isSel) {
+  // Selected slabs get a taller texture to show pseudocode
+  const hasPseudo = isSel && layer.pseudo && layer.pseudo.length > 0;
+  const hasSummary = !!layer.summary;
+  const texH = hasPseudo ? 205 : (hasSummary ? 110 : 100);
+  return makeCanvasTex((ctx, W, H) => {
+    // Background
+    ctx.fillStyle = isSel ? 'rgba(0,0,0,0.65)' : 'rgba(0,0,0,0.4)';
+    ctx.beginPath(); ctx.roundRect(0,0,W,H,5); ctx.fill();
+    // Left accent bar
+    ctx.fillStyle = layer.color;
+    ctx.fillRect(0,0,4,H);
+    // Selection border
+    if (isSel) { ctx.strokeStyle = layer.color; ctx.lineWidth = 2; ctx.beginPath(); ctx.roundRect(1,1,W-2,H-2,5); ctx.stroke(); }
+    // Type badge
+    ctx.font = 'bold 9px monospace'; ctx.textAlign = 'right';
+    ctx.fillStyle = layer.color+'40';
+    const bw = ctx.measureText(layer.type.toUpperCase()).width+14;
+    ctx.beginPath(); ctx.roundRect(W-bw-6,6,bw,14,3); ctx.fill();
+    ctx.fillStyle = layer.color;
+    ctx.fillText(layer.type.toUpperCase(), W-10, 16);
+    // Name
+    ctx.textAlign = 'left';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillStyle = layer.color;
+    ctx.fillText(layer.name, 14, 18);
+
+    // Summary line — plain-language description
+    let yOff = 0;
+    if (hasSummary) {
+      ctx.font = 'italic 10px sans-serif';
+      ctx.fillStyle = isSel ? '#b0bec5' : '#6b7a8d';
+      wrapTextCanvas(ctx, '▸ ' + layer.summary, 14, 32, W-28, 12, 2);
+      yOff = 14; // shift everything below down
+    }
+
+    // Math formula
+    ctx.font = '13px monospace';
+    ctx.fillStyle = isSel ? '#ffffff' : '#cbd5e1';
+    wrapTextCanvas(ctx, layer.math, 14, 40 + yOff, W-28, 15);
+    // Description (selected only, compact)
+    if (isSel) { ctx.font = '10px sans-serif'; ctx.fillStyle = '#8899aa'; wrapTextCanvas(ctx, layer.desc, 14, 62 + yOff, W-28, 12, 2); }
+
+    // Pseudocode block on selected card
+    if (hasPseudo) {
+      const pcY0 = 92 + yOff;
+      // Separator line
+      ctx.strokeStyle = layer.color + '30';
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(14, pcY0); ctx.lineTo(W-14, pcY0); ctx.stroke();
+      // Label
+      ctx.font = 'bold 8px monospace';
+      ctx.fillStyle = layer.color + '80';
+      ctx.fillText('PSEUDOCODE · FIPS 203 ' + (layer.algRef || ''), 14, pcY0 + 10);
+      // Code lines
+      ctx.font = '10px monospace';
+      let ly = pcY0 + 24;
+      const maxPcLines = 6;
+      const pcLines = layer.pseudo.slice(0, maxPcLines);
+      pcLines.forEach(p => {
+        const lnStr = (p.ln !== '' && p.ln !== undefined) ? String(p.ln).padStart(2,' ') : '  ';
+        // Line number
+        ctx.fillStyle = '#334155';
+        ctx.fillText(lnStr, 14, ly);
+        // Code text
+        if (p.hl) {
+          // Highlighted line: brighter with subtle bg
+          const codeText = p.code;
+          const textW = ctx.measureText(codeText).width;
+          ctx.fillStyle = layer.color + '12';
+          ctx.fillRect(36, ly - 9, textW + 6, 13);
+          ctx.fillStyle = '#e2e8f0';
+          ctx.fillText(codeText, 38, ly);
+        } else {
+          ctx.fillStyle = '#94a3b8';
+          ctx.fillText(p.code, 38, ly);
+        }
+        // Comment
+        if (p.cm) {
+          const codeW = ctx.measureText(p.code).width;
+          ctx.fillStyle = '#334155';
+          ctx.font = 'italic 9px monospace';
+          ctx.fillText(p.cm, 42 + codeW, ly);
+          ctx.font = '10px monospace';
+        }
+        ly += 14;
+      });
+      if (layer.pseudo.length > maxPcLines) {
+        ctx.fillStyle = '#334155';
+        ctx.font = 'italic 9px monospace';
+        ctx.fillText('... +' + (layer.pseudo.length - maxPcLines) + ' more lines', 38, ly);
+      }
+    }
+  }, 560, texH);
+}
+
+function flowLabel3D(text, color) {
+  return makeCanvasTex((ctx, W, H) => {
+    ctx.fillStyle = 'rgba(8,12,20,0.85)';
+    ctx.beginPath(); ctx.roundRect(0,0,W,H,3); ctx.fill();
+    ctx.strokeStyle = color+'60'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.roundRect(0,0,W,H,3); ctx.stroke();
+    ctx.font = 'bold 9px monospace'; ctx.fillStyle = color;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(text, W/2, H/2);
+  }, 180, 18);
+}
+
+function clearSceneObjects() {
+  while (scene.children.length > 3) scene.remove(scene.children[scene.children.length-1]);
+}
+
+function build3D() {
+  clearSceneObjects();
+  const layers = phaseData.layers;
+
+  // Layer slabs
+  layers.forEach((layer, i) => {
+    const g = new THREE.Group();
+    const isSel = i === selectedIdx;
+    const c = new THREE.Color(layer.color);
+
+    const hasPseudo = isSel && layer.pseudo && layer.pseudo.length > 0;
+    const hasSummary = !!layer.summary;
+    const slabD = hasPseudo ? SLAB_D * 1.8 : (hasSummary ? SLAB_D * 1.12 : SLAB_D);
+
+    const geo = new THREE.BoxGeometry(SLAB_W, isSel?SLAB_H*1.8:SLAB_H, slabD);
+    const mat = new THREE.MeshPhongMaterial({ color: c.clone().multiplyScalar(isSel?0.4:0.18), transparent:true, opacity:isSel?0.88:0.5, specular:c.clone().multiplyScalar(0.3), shininess:50 });
+    g.add(new THREE.Mesh(geo, mat));
+    g.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color:c, transparent:true, opacity:isSel?0.8:0.25 })));
+
+    const tex = layerTex(layer, isSel);
+    const panelD = hasPseudo ? slabD * 0.92 : slabD * 0.88;
+    const panel = new THREE.Mesh(new THREE.PlaneGeometry(SLAB_W*0.94, panelD), new THREE.MeshBasicMaterial({ map:tex, transparent:true, opacity:isSel?1:0.85, side:THREE.DoubleSide, depthWrite:false }));
+    panel.position.y = (isSel?SLAB_H*0.9:SLAB_H/2)+0.004;
+    panel.rotation.x = -Math.PI/2;
+    g.add(panel);
+
+    const fTex = makeCanvasTex((ctx, W, H) => {
+      ctx.font = 'bold 10px monospace';
+      ctx.fillStyle = isSel ? layer.color : '#3e4a5a';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(String(i+1).padStart(2,'0')+'  '+layer.name, W/2, H/2);
+    }, 400, 18);
+    const fm = new THREE.Mesh(new THREE.PlaneGeometry(SLAB_W*0.85, SLAB_H*1.3), new THREE.MeshBasicMaterial({ map:fTex, transparent:true, opacity:0.9, side:THREE.DoubleSide, depthWrite:false }));
+    fm.position.z = slabD/2+0.004;
+    g.add(fm);
+
+    if (isSel) {
+      const glow = new THREE.Mesh(new THREE.PlaneGeometry(SLAB_W+0.6, slabD+0.6), new THREE.MeshBasicMaterial({ color:c, transparent:true, opacity:0.07, side:THREE.DoubleSide }));
+      glow.position.y = -SLAB_H-0.01; glow.rotation.x = -Math.PI/2;
+      g.add(glow);
+    }
+
+    const orb = new THREE.Mesh(new THREE.SphereGeometry(isSel?0.13:0.06,12,12), new THREE.MeshBasicMaterial({ color:c, transparent:true, opacity:isSel?1:0.4 }));
+    orb.position.set(-SLAB_W/2-0.3, 0, 0);
+    g.add(orb);
+
+    g.position.y = -i*SPACING;
+    scene.add(g);
+  });
+
+  // Flow arrows
+  (phaseData.flows||[]).forEach((flow, fi) => {
+    const y0 = -flow.from*SPACING - SLAB_H/2 - 0.06;
+    const y1 = -flow.to*SPACING + SLAB_H/2 + 0.06;
+    const isSeq = flow.type==='seq';
+    const gap = flow.to - flow.from;
+    const isSkip = gap > 1;
+    let xOff = 0;
+    if (!isSeq || isSkip) xOff = (fi%2===0?-1:1)*(1.5+(isSkip?gap*0.3:0));
+
+    const fromC = new THREE.Color(layers[flow.from].color);
+    const toC = new THREE.Color(layers[flow.to].color);
+    const midC = fromC.clone().lerp(toC, 0.5);
+
+    const pts = [];
+    for (let j=0; j<=24; j++) {
+      const t = j/24;
+      const y = y0+(y1-y0)*t;
+      const bulge = Math.sin(t*Math.PI);
+      pts.push(new THREE.Vector3(xOff*bulge, y, (isSkip?-0.3:0)*bulge));
+    }
+    const curve = new THREE.CatmullRomCurve3(pts);
+
+    const thick = isSeq?0.025:0.018;
+    const op = isSeq?0.7:0.5;
+    scene.add(new THREE.Mesh(new THREE.TubeGeometry(curve,20,thick,6,false), new THREE.MeshBasicMaterial({ color:midC, transparent:true, opacity:op })));
+    scene.add(new THREE.Mesh(new THREE.TubeGeometry(curve,16,thick*3,6,false), new THREE.MeshBasicMaterial({ color:midC, transparent:true, opacity:0.08, blending:THREE.AdditiveBlending, depthWrite:false })));
+
+    const endPt = curve.getPointAt(0.97);
+    const prevPt = curve.getPointAt(0.93);
+    const dir = new THREE.Vector3().subVectors(endPt, prevPt).normalize();
+    const arrow = new THREE.Mesh(new THREE.ConeGeometry(0.06,0.14,5), new THREE.MeshBasicMaterial({ color:midC, transparent:true, opacity:0.85 }));
+    arrow.position.copy(endPt);
+    arrow.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), dir);
+    scene.add(arrow);
+
+    [0.3, 0.6].forEach(ct => {
+      const cp = curve.getPointAt(ct);
+      const cpPrev = curve.getPointAt(ct-0.03);
+      const cDir = new THREE.Vector3().subVectors(cp, cpPrev).normalize();
+      const chev = new THREE.Mesh(new THREE.ConeGeometry(0.03,0.07,4), new THREE.MeshBasicMaterial({ color:midC, transparent:true, opacity:0.45 }));
+      chev.position.copy(cp);
+      chev.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), cDir);
+      scene.add(chev);
+    });
+
+    if (flow.label) {
+      const lPos = curve.getPointAt(0.5);
+      const lTex = flowLabel3D(flow.label, midC.getStyle());
+      const lm = new THREE.Mesh(new THREE.PlaneGeometry(1.3,0.14), new THREE.MeshBasicMaterial({ map:lTex, transparent:true, opacity:0.95, side:THREE.DoubleSide, depthWrite:false }));
+      lm.position.copy(lPos);
+      lm.position.x += (xOff>=0?0.75:-0.75);
+      scene.add(lm);
+    }
+  });
+
+  // Loops
+  (phaseData.loops||[]).forEach(loop => {
+    const y0 = -loop.from*SPACING, y1 = -loop.to*SPACING;
+    const c = new THREE.Color(loop.color||'#e879f9');
+    const xB = 4.8;
+    const pts = [];
+    for (let j=0; j<=50; j++) {
+      const t=j/50;
+      const bulge = Math.sin(t*Math.PI);
+      pts.push(new THREE.Vector3(xB*bulge, y0+(y1-y0)*t, -0.5*bulge));
+    }
+    const curve = new THREE.CatmullRomCurve3(pts);
+
+    for (let s=0; s<80; s++) {
+      if (s%4===3) continue;
+      const t0=s/80, t1=(s+1)/80;
+      const p0=curve.getPointAt(t0), p1=curve.getPointAt(t1);
+      const mid=p0.clone().lerp(p1,0.5);
+      scene.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3([p0,mid,p1]),3,0.02,4,false), new THREE.MeshBasicMaterial({ color:c, transparent:true, opacity:0.55 })));
+    }
+    scene.add(new THREE.Mesh(new THREE.TubeGeometry(curve,30,0.06,6,false), new THREE.MeshBasicMaterial({ color:c, transparent:true, opacity:0.06, blending:THREE.AdditiveBlending, depthWrite:false })));
+
+    const endPt = curve.getPointAt(0.98), prevPt = curve.getPointAt(0.94);
+    const dir = new THREE.Vector3().subVectors(endPt,prevPt).normalize();
+    const arr = new THREE.Mesh(new THREE.ConeGeometry(0.07,0.18,5), new THREE.MeshBasicMaterial({ color:c, transparent:true, opacity:0.8 }));
+    arr.position.copy(endPt);
+    arr.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), dir);
+    scene.add(arr);
+
+    const apex = curve.getPointAt(0.5);
+    const lt = flowLabel3D(loop.label, c.getStyle());
+    const lm = new THREE.Mesh(new THREE.PlaneGeometry(2.6,0.16), new THREE.MeshBasicMaterial({ map:lt, transparent:true, opacity:0.95, side:THREE.DoubleSide, depthWrite:false }));
+    lm.position.copy(apex); lm.position.x += 0.8;
+    scene.add(lm);
+  });
+
+  // Particles
+  const count = 90;
+  const pGeo = new THREE.BufferGeometry();
+  const pos = new Float32Array(count*3);
+  const cols = new Float32Array(count*3);
+  const yMin = -(layers.length-1)*SPACING-1, yMax = 1;
+  for (let i=0; i<count; i++) {
+    pos[i*3]=(Math.random()-0.5)*5;
+    pos[i*3+1]=yMin+Math.random()*(yMax-yMin);
+    pos[i*3+2]=(Math.random()-0.5)*2.5;
+    const cl = new THREE.Color(layers[Math.floor(Math.random()*layers.length)].color);
+    cols[i*3]=cl.r; cols[i*3+1]=cl.g; cols[i*3+2]=cl.b;
+  }
+  pGeo.setAttribute('position', new THREE.Float32BufferAttribute(pos,3));
+  pGeo.setAttribute('color', new THREE.Float32BufferAttribute(cols,3));
+  const particles = new THREE.Points(pGeo, new THREE.PointsMaterial({ size:0.04, vertexColors:true, transparent:true, opacity:0.45, blending:THREE.AdditiveBlending, depthWrite:false }));
+  particles.userData = { yMin, yMax };
+  scene.add(particles);
+
+  camTargetY = -selectedIdx * SPACING;
+}
+
+function initThree() {
+  const vp = document.getElementById('viewport');
+  const w = vp.clientWidth, h = vp.clientHeight;
+
+  scene = new THREE.Scene();
+  scene.fog = new THREE.FogExp2(0x080c14, 0.016);
+  scene.add(new THREE.AmbientLight(0x556677, 1.0));
+  const dl = new THREE.DirectionalLight(0xffffff, 0.35);
+  dl.position.set(4,12,6); scene.add(dl);
+  const pl = new THREE.PointLight(0x22d3ee, 0.2, 30);
+  pl.position.set(-5,2,5); scene.add(pl);
+
+  camera = new THREE.PerspectiveCamera(32, w/h, 0.1, 100);
+  renderer = new THREE.WebGLRenderer({ antialias:true });
+  renderer.setSize(w, h);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setClearColor(0x080c14, 1);
+  vp.insertBefore(renderer.domElement, vp.firstChild);
+
+  clock = new THREE.Clock();
+
+  vp.addEventListener('pointerdown', e => { isDrag=true; dragStart={x:e.clientX,y:e.clientY}; });
+  vp.addEventListener('pointerup', () => isDrag=false);
+  vp.addEventListener('pointermove', e => {
+    if (!isDrag) return;
+    camAngleTarget.theta += (e.clientX-dragStart.x)*0.004;
+    camAngleTarget.phi = Math.max(-0.6, Math.min(0.6, camAngleTarget.phi+(e.clientY-dragStart.y)*0.004));
+    dragStart = {x:e.clientX, y:e.clientY};
+  });
+
+  window.addEventListener('resize', () => {
+    const nw = vp.clientWidth, nh = vp.clientHeight;
+    camera.aspect = nw/nh;
+    camera.updateProjectionMatrix();
+    renderer.setSize(nw, nh);
+  });
+
+  animate();
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  const t = clock.getElapsedTime();
+  const R = 11;
+
+  camAngle.theta += (camAngleTarget.theta - camAngle.theta)*0.05;
+  camAngle.phi += (camAngleTarget.phi - camAngle.phi)*0.05;
+  camera.position.x = R*Math.sin(camAngle.theta)*Math.cos(camAngle.phi);
+  camera.position.z = R*Math.cos(camAngle.theta)*Math.cos(camAngle.phi);
+  const tgtY = camTargetY + R*Math.sin(camAngle.phi);
+  camera.position.y += (tgtY - camera.position.y)*0.06;
+  camera.lookAt(0, camTargetY, 0);
+
+  scene.children.forEach(child => {
+    if (child instanceof THREE.Points && child.userData.yMin !== undefined) {
+      const pos = child.geometry.attributes.position;
+      const {yMin, yMax} = child.userData;
+      for (let i=0; i<pos.count; i++) {
+        let y = pos.getY(i)-0.003;
+        if (y < yMin) y = yMax;
+        pos.setY(i, y);
+        pos.setX(i, pos.getX(i) + Math.sin(t+i)*0.0006);
+      }
+      pos.needsUpdate = true;
+    }
+  });
+
+  renderer.render(scene, camera);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  KEYBOARD
+// ═══════════════════════════════════════════════════════════════
+window.addEventListener('keydown', e => {
+  if (e.key==='ArrowDown'||e.key==='j') { e.preventDefault(); setSelected(selectedIdx+1); }
+  else if (e.key==='ArrowUp'||e.key==='k') { e.preventDefault(); setSelected(selectedIdx-1); }
+  else if (e.key==='1') setPhase('keygen');
+  else if (e.key==='2') setPhase('encaps');
+  else if (e.key==='3') setPhase('decaps');
+  else if (e.key==='p') {
+    showPseudo = !showPseudo;
+    rebuild();
+  }
+});
+
+document.getElementById('btn-up').onclick = () => setSelected(selectedIdx-1);
+document.getElementById('btn-down').onclick = () => setSelected(selectedIdx+1);
+document.getElementById('pc-toggle').onclick = () => { showPseudo = !showPseudo; rebuild(); };
+
+// ═══════════════════════════════════════════════════════════════
+//  REBUILD ALL
+// ═══════════════════════════════════════════════════════════════
+function rebuild() {
+  phaseData = getPhase();
+  renderHeader();
+  renderFlowchart();
+  renderPseudocode();
+  renderDetail();
+  build3D();
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  INIT
+// ═══════════════════════════════════════════════════════════════
+window.addEventListener('DOMContentLoaded', () => {
+  initThree();
+  rebuild();
+});
+</script>
+</body>
+</html>
