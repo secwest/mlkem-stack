@@ -133,7 +133,7 @@
   </div>
   <div id="main">
     <div id="viewport">
-      <div class="hint">↑↓ j/k navigate · drag orbit · 1/2/3 switch phase · p toggle pseudocode</div>
+      <div class="hint">↑↓ j/k navigate · drag orbit · scroll zoom · 1/2/3 switch phase · p toggle pseudocode</div>
     </div>
     <div id="sidebar">
       <div class="section-label">
@@ -458,34 +458,34 @@ const PHASES = [
 // ═══════════════════════════════════════════════════════════════
 const SUMMARIES = {
   keygen: [
-    "Hash a random seed into two sub-seeds: one public, one secret",
-    "Deterministically build a shared k×k matrix of polynomials from the public seed",
-    "Generate a secret vector of small random polynomials (the private key core)",
-    "Generate a noise vector of small random polynomials to hide the secret",
-    "Convert secret & noise from coefficient form → frequency form for fast multiply",
-    "Multiply the public matrix by the secret vector (k² polynomial multiplies)",
-    "Add noise to the product — this creates the hard-to-invert public key vector",
-    "Serialize and bundle public key (matrix seed + product) and private key (secret + metadata)",
+    "SHA3-512 hashes 32-byte random seed d concatenated with security-level byte k, producing public seed ρ (32 bytes, used to generate matrix Â) and secret seed σ (32 bytes, used to sample secret and error vectors)",
+    "SHAKE-128 (XOF) deterministically expands public seed ρ into k² polynomials in NTT domain, each with 256 coefficients in ℤ₃₃₂₉ — forms the shared public matrix Â via rejection sampling to ensure uniform distribution",
+    "Centered Binomial Distribution samples secret vector s: for each of k polynomials, SHAKE-256 as PRF produces 2η₁ random bytes per coefficient, split and subtracted to yield coefficients in [−η₁, η₁] — this is the private key core",
+    "Same CBD process with incremented counter N produces error vector e — this noise masks the exact relationship between the public matrix and secret vector, making the public key computationally indistinguishable from random under the Module-LWE assumption",
+    "Forward Number Theoretic Transform converts secret vector s and error vector e from coefficient domain to evaluation form at powers of ζ=17 (primitive 256th root of unity mod q=3329), enabling O(n log n) polynomial multiplication in the next step",
+    "Matrix-vector multiplication in NTT domain: for each of k rows, compute the inner product Â[i][j] ∘ ŝ[j] using 128 base-case multiplies of degree-1 polynomials per pointwise product — total of k²×128 base-case multiplications",
+    "Pointwise addition of error vector ê to the matrix-vector product in NTT domain completes the Module-LWE instance t̂ = Â∘ŝ + ê — recovering s from the public pair (Â, t̂) requires solving M-LWE, believed hard for quantum adversaries",
+    "Encapsulation key: ByteEncode₁₂(t̂) concatenated with ρ (enables Â regeneration). Decapsulation key bundles: encoded ŝ, the full encapsulation key, H(ek) = SHA3-256(ek), and implicit-rejection seed z (32 bytes from RBG) per FIPS 203 Algorithm 16",
   ],
   encaps: [
-    "Draw 32 random bytes — this ephemeral seed drives all encryption randomness",
-    "Hash seed + public key → shared secret material + deterministic noise coin",
-    "Convert ephemeral vector to frequency domain for matrix multiply",
-    "Multiply transposed public matrix by ephemeral vector + add noise → ciphertext part 1",
-    "Lossy-round ciphertext part 1: shrink coefficients from 12-bit to du-bit to save space",
-    "Dot-product public key with ephemeral + noise + scaled message bits → ciphertext part 2",
-    "Lossy-round ciphertext part 2: shrink from 12-bit to dv-bit (most aggressive compression)",
-    "Concatenate both ciphertext halves; derive the 32-byte shared secret via SHA3",
+    "Uniformly random 256-bit ephemeral value m drawn from an approved RBG — this is not plaintext but a seed from which noise vectors and the shared secret K are both deterministically derived via the Fujisaki-Okamoto transform",
+    "SHA3-512 derives (K̄, r) from m concatenated with SHA3-256 hash of encapsulation key: K̄ becomes the raw shared secret material, r is the deterministic randomness coin that drives all ephemeral noise sampling — this determinism enables the re-encryption check in decapsulation",
+    "Forward NTT on the ephemeral vector y (CBD-sampled small coefficients) converts it to evaluation form for efficient matrix-vector multiplication in the NTT domain — used once during this encapsulation then discarded with all other ephemeral state",
+    "Transpose matrix-vector multiply Âᵀ∘ŷ in NTT domain, inverse NTT back to coefficient domain, then add error vector e₁ — computes u = Aᵀ·y + e₁, the sender's half of the shared lattice computation using the public matrix Â regenerated from ρ",
+    "Lossy compression of ciphertext u: each coefficient mapped from [0, q) to [0, 2^du) via rounding, introducing permanent bounded error |ε| ≤ q/(2·2^du). For ML-KEM-768 with du=10, this reduces from 12-bit to 10-bit coefficients saving approximately 500 bytes",
+    "Inner product of public key t̂ with ephemeral ŷ in NTT domain, inverse NTT, then add error e₂ and Decompress₁(m) which maps each message bit: 0→0, 1→⌈q/2⌋=1665 — places message bits at maximum distance from the decision boundary in ℤ_q for optimal noise tolerance",
+    "Aggressive compression of v with dv=4 for ML-KEM-768: 12-bit coefficients reduced to 4-bit. The combined noise budget from LWE error, Compress(u) rounding, and Compress(v) rounding must remain below q/4 ≈ 832 for correct decryption — always satisfied for valid ciphertexts",
+    "Ciphertext c = (c₁ ‖ c₂) is the concatenation of compressed u and v. Shared secret K = SHA3-256(K̄) where K̄ is the first 32 bytes from G(m ‖ H(ek)), returned as the 32-byte symmetric key for subsequent AEAD encryption alongside ciphertext c",
   ],
   decaps: [
-    "Receive the two-part compressed ciphertext from the sender",
-    "Reverse the lossy rounding: scale compressed values back up to mod-q (approximate)",
-    "Convert decompressed u vector to frequency domain to match stored secret key",
-    "Multiply secret key by ciphertext vector — approximates the sender's lattice point",
-    "Subtract to cancel the shared lattice term; isolate scaled message + small residual noise",
-    "Round each noisy coefficient to 0 or 1 — noise is small enough that no bits flip",
-    "Re-encrypt recovered message and compare ciphertexts; reject if they differ (FO transform)",
-    "Output shared secret: real key if match, pseudorandom decoy if tampered (IND-CCA2)",
+    "Parse the received ciphertext into compressed components c₁ (encoding u) and c₂ (encoding v), and extract decapsulation key components: encoded secret ŝ, full encapsulation key ek, stored hash h = H(ek), and implicit-rejection seed z",
+    "Reverse lossy compression: scale values from [0, 2^d) back to [0, q) via ⌈(q/2^d)·x⌋. This does not recover exact originals — the rounding error from compression is permanent per Lemma 1: |ε| ≤ q/(2p) + 1/2, adding to the total noise budget",
+    "Forward NTT on decompressed u' for efficient multiplication with the stored secret key ŝ (already in NTT domain from keygen) — avoids expensive O(n²) polynomial multiplication in coefficient domain",
+    "Core decryption inner product: w = NTT⁻¹(ŝᵀ ∘ û') computes sᵀ·u' ≈ sᵀ·Aᵀ·y + sᵀ·e₁ + rounding noise. The sᵀ·Aᵀ·y = tᵀ·y term is what cancels against v in the next subtraction step",
+    "Key cancellation: v' − w ≈ eᵀy + e₂ − sᵀe₁ + ⌈q/2⌋·m + compression noise. Since t = As+e, the shared lattice terms cancel leaving residual ε_total = eᵀy + e₂ − sᵀe₁ + rounding, which is small because all noise terms have small coefficients",
+    "Compress₁ rounds each of 256 coefficients to {0, 1}: values near 0 map to 0, values near q/2=1665 map to 1, with decision boundary at q/4 ≈ 832. Since |ε_total| < q/4 always holds for valid ciphertexts, no bits flip — decryption failure probability ≈ 2⁻¹⁶⁴ for ML-KEM-768",
+    "Fujisaki-Okamoto implicit rejection: deterministically re-derive (K̄', r') from recovered m' via G(m' ‖ h), re-run full K-PKE.Encrypt with all noise vectors re-derived identically from r'. Constant-time comparison c' ≟ c — if mismatch, output K̄ = J(z ‖ c) via SHAKE-256 using secret seed z",
+    "Match path: K = SHA3-256(K̄'), identical to encapsulator's output. Rejection path: K = SHAKE-256(z ‖ c) using secret seed z and full ciphertext — adversary cannot distinguish which path was taken, providing IND-CCA2 security. The seed z is never revealed",
   ],
 };
 
@@ -706,11 +706,12 @@ function renderDetail() {
 //  THREE.JS 3D SCENE
 // ═══════════════════════════════════════════════════════════════
 let scene, camera, renderer, clock;
-let camAngle = { theta: 0.55, phi: 0.2 };
-let camAngleTarget = { theta: 0.55, phi: 0.2 };
+let camAngle = { theta: 0.45, phi: 0.55 };
+let camAngleTarget = { theta: 0.45, phi: 0.55 };
 let camTargetY = 0;
 let isDrag = false, dragStart = { x:0, y:0 };
-const SPACING = 1.6, SLAB_W = 5.8, SLAB_H = 0.09, SLAB_D = 3.0;
+let camDist = 9;
+const SPACING = 1.8, SLAB_W = 6.4, SLAB_H = 0.09, SLAB_D = 3.0;
 
 function makeCanvasTex(drawFn, w, h) {
   const S = 2, c = document.createElement('canvas');
@@ -740,10 +741,9 @@ function wrapTextCanvas(ctx, text, x, y, maxW, lh, maxLines) {
 }
 
 function layerTex(layer, isSel) {
-  // Selected slabs get a taller texture to show pseudocode
   const hasPseudo = isSel && layer.pseudo && layer.pseudo.length > 0;
   const hasSummary = !!layer.summary;
-  const texH = hasPseudo ? 205 : (hasSummary ? 110 : 100);
+  const texH = hasPseudo ? 280 : (hasSummary ? 160 : 120);
   return makeCanvasTex((ctx, W, H) => {
     // Background
     ctx.fillStyle = isSel ? 'rgba(0,0,0,0.65)' : 'rgba(0,0,0,0.4)';
@@ -771,20 +771,20 @@ function layerTex(layer, isSel) {
     if (hasSummary) {
       ctx.font = 'italic 10px sans-serif';
       ctx.fillStyle = isSel ? '#b0bec5' : '#6b7a8d';
-      wrapTextCanvas(ctx, '▸ ' + layer.summary, 14, 32, W-28, 12, 2);
-      yOff = 14; // shift everything below down
+      wrapTextCanvas(ctx, '▸ ' + layer.summary, 14, 32, W-28, 12, 3);
+      yOff = 26; // shift everything below down
     }
 
     // Math formula
     ctx.font = '13px monospace';
     ctx.fillStyle = isSel ? '#ffffff' : '#cbd5e1';
-    wrapTextCanvas(ctx, layer.math, 14, 40 + yOff, W-28, 15);
+    wrapTextCanvas(ctx, layer.math, 14, 40 + yOff, W-28, 15, 3);
     // Description (selected only, compact)
-    if (isSel) { ctx.font = '10px sans-serif'; ctx.fillStyle = '#8899aa'; wrapTextCanvas(ctx, layer.desc, 14, 62 + yOff, W-28, 12, 2); }
+    if (isSel) { ctx.font = '10px sans-serif'; ctx.fillStyle = '#8899aa'; wrapTextCanvas(ctx, layer.desc, 14, 72 + yOff, W-28, 12, 4); }
 
     // Pseudocode block on selected card
     if (hasPseudo) {
-      const pcY0 = 92 + yOff;
+      const pcY0 = 126 + yOff;
       // Separator line
       ctx.strokeStyle = layer.color + '30';
       ctx.lineWidth = 1;
@@ -796,7 +796,7 @@ function layerTex(layer, isSel) {
       // Code lines
       ctx.font = '10px monospace';
       let ly = pcY0 + 24;
-      const maxPcLines = 6;
+      const maxPcLines = 8;
       const pcLines = layer.pseudo.slice(0, maxPcLines);
       pcLines.forEach(p => {
         const lnStr = (p.ln !== '' && p.ln !== undefined) ? String(p.ln).padStart(2,' ') : '  ';
@@ -832,7 +832,7 @@ function layerTex(layer, isSel) {
         ctx.fillText('... +' + (layer.pseudo.length - maxPcLines) + ' more lines', 38, ly);
       }
     }
-  }, 560, texH);
+  }, 640, texH);
 }
 
 function flowLabel3D(text, color) {
@@ -863,9 +863,9 @@ function build3D() {
 
     const hasPseudo = isSel && layer.pseudo && layer.pseudo.length > 0;
     const hasSummary = !!layer.summary;
-    const slabD = hasPseudo ? SLAB_D * 1.8 : (hasSummary ? SLAB_D * 1.12 : SLAB_D);
+    const slabD = hasPseudo ? SLAB_D * 2.4 : (hasSummary ? SLAB_D * 1.5 : SLAB_D);
 
-    const geo = new THREE.BoxGeometry(SLAB_W, isSel?SLAB_H*1.8:SLAB_H, slabD);
+    const geo = new THREE.BoxGeometry(SLAB_W, isSel?SLAB_H*2.2:SLAB_H, slabD);
     const mat = new THREE.MeshPhongMaterial({ color: c.clone().multiplyScalar(isSel?0.4:0.18), transparent:true, opacity:isSel?0.88:0.5, specular:c.clone().multiplyScalar(0.3), shininess:50 });
     g.add(new THREE.Mesh(geo, mat));
     g.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineBasicMaterial({ color:c, transparent:true, opacity:isSel?0.8:0.25 })));
@@ -873,7 +873,7 @@ function build3D() {
     const tex = layerTex(layer, isSel);
     const panelD = hasPseudo ? slabD * 0.92 : slabD * 0.88;
     const panel = new THREE.Mesh(new THREE.PlaneGeometry(SLAB_W*0.94, panelD), new THREE.MeshBasicMaterial({ map:tex, transparent:true, opacity:isSel?1:0.85, side:THREE.DoubleSide, depthWrite:false }));
-    panel.position.y = (isSel?SLAB_H*0.9:SLAB_H/2)+0.004;
+    panel.position.y = (isSel?SLAB_H*1.1:SLAB_H/2)+0.004;
     panel.rotation.x = -Math.PI/2;
     g.add(panel);
 
@@ -1020,14 +1020,14 @@ function initThree() {
   const w = vp.clientWidth, h = vp.clientHeight;
 
   scene = new THREE.Scene();
-  scene.fog = new THREE.FogExp2(0x080c14, 0.016);
+  scene.fog = new THREE.FogExp2(0x080c14, 0.012);
   scene.add(new THREE.AmbientLight(0x556677, 1.0));
   const dl = new THREE.DirectionalLight(0xffffff, 0.35);
   dl.position.set(4,12,6); scene.add(dl);
   const pl = new THREE.PointLight(0x22d3ee, 0.2, 30);
   pl.position.set(-5,2,5); scene.add(pl);
 
-  camera = new THREE.PerspectiveCamera(32, w/h, 0.1, 100);
+  camera = new THREE.PerspectiveCamera(38, w/h, 0.1, 100);
   renderer = new THREE.WebGLRenderer({ antialias:true });
   renderer.setSize(w, h);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -1036,12 +1036,17 @@ function initThree() {
 
   clock = new THREE.Clock();
 
+  vp.addEventListener('wheel', e => {
+    e.preventDefault();
+    camDist = Math.max(5, Math.min(16, camDist + e.deltaY * 0.008));
+  }, { passive: false });
+
   vp.addEventListener('pointerdown', e => { isDrag=true; dragStart={x:e.clientX,y:e.clientY}; });
   vp.addEventListener('pointerup', () => isDrag=false);
   vp.addEventListener('pointermove', e => {
     if (!isDrag) return;
     camAngleTarget.theta += (e.clientX-dragStart.x)*0.004;
-    camAngleTarget.phi = Math.max(-0.6, Math.min(0.6, camAngleTarget.phi+(e.clientY-dragStart.y)*0.004));
+    camAngleTarget.phi = Math.max(-0.3, Math.min(1.1, camAngleTarget.phi+(e.clientY-dragStart.y)*0.004));
     dragStart = {x:e.clientX, y:e.clientY};
   });
 
@@ -1058,14 +1063,14 @@ function initThree() {
 function animate() {
   requestAnimationFrame(animate);
   const t = clock.getElapsedTime();
-  const R = 11;
+  const R = camDist;
 
-  camAngle.theta += (camAngleTarget.theta - camAngle.theta)*0.05;
-  camAngle.phi += (camAngleTarget.phi - camAngle.phi)*0.05;
+  camAngle.theta += (camAngleTarget.theta - camAngle.theta)*0.08;
+  camAngle.phi += (camAngleTarget.phi - camAngle.phi)*0.08;
   camera.position.x = R*Math.sin(camAngle.theta)*Math.cos(camAngle.phi);
   camera.position.z = R*Math.cos(camAngle.theta)*Math.cos(camAngle.phi);
   const tgtY = camTargetY + R*Math.sin(camAngle.phi);
-  camera.position.y += (tgtY - camera.position.y)*0.06;
+  camera.position.y += (tgtY - camera.position.y)*0.10;
   camera.lookAt(0, camTargetY, 0);
 
   scene.children.forEach(child => {
